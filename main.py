@@ -12,7 +12,7 @@ MAX_DISTANCE = 1000.0
 # Number of nodes.
 NODE_COUNT = 3
 
-# Lost Message % [0, 100)
+# Lost Message % [0, 100) on send
 LOST_MESSAGES_PERCENTAGE = 0.0
 
 # Distance between nodes gets multiplied by this factor and converted to seconds.
@@ -103,15 +103,44 @@ class Transport:
                 "connection_speed": random.uniform(np.nextafter(0, 1), np.nextafter(1, 2)),
             }
 
+    def get_distance(self, from_node_id, to_node_id):
+        # Get distance between two nodes by id.
+        return math.sqrt(
+            (self.nodes_map[from_node_id]['x'] - self.nodes_map[to_node_id]['x']) ** 2 +
+            (self.nodes_map[from_node_id]['y'] - self.nodes_map[to_node_id]['y']) ** 2
+        )
+
+    def connection_delay(self, from_node_id, to_node_id):
+        """Get connection delay between two nodes in seconds."""
+        distance = self.get_distance(from_node_id, to_node_id)
+        avg_connection_speed = (
+                self.nodes_map[from_node_id]['connection_speed']
+                + self.nodes_map[to_node_id]['connection_speed']
+        ) / 2.0
+        return distance * avg_connection_speed * DELAY_MULTIPLIER
+
     def send(self, message: Message, from_id: int, to_id: int) -> bool:
 
+        # Randomly drop this message.
+        if random.randint(0, 100) <= (self.nodes_map[from_id]['drop_rate']+self.nodes_map[to_id]['drop_rate'])/2.0:
+            logging.info("Message N{}->N{} {} was dropped due to the random drop rule.".format(
+                from_id,
+                to_id,
+                message,
+            ))
+            return False
+
+        # Calculate delivery times.
+        time_now = time.time()
+        time_deliver = time_now + self.connection_delay(from_id, to_id)
 
         self.pool.append(
             self.MessageWrapper(
                 message=message,
                 from_id=from_id,
                 to_id=to_id,
-
+                time_send=time_now,
+                time_deliver=time_deliver,
             )
         )
 
@@ -536,14 +565,14 @@ async def main():
     # Run node that generates the first block.
     await nodes[nodes[0].get_next_block_master_id()].run()
 
-    succeded = 0
+    succeeded = 0
     for i in range(len(nodes)):
         if len(nodes[i].chain):
-            succeded += 1
+            succeeded += 1
 
     logging.info("{} nodes confirmed the block, {} did not.".format(
-        succeded,
-        len(nodes) - succeded,
+        succeeded,
+        len(nodes) - succeeded,
     ))
 
     logging.info("THE END")
