@@ -1,7 +1,8 @@
+from __future__ import annotations
+from typing import Tuple, List, Union
 import math
 import random
 import logging
-import asyncio
 import numpy as np
 import time
 import copy
@@ -20,57 +21,65 @@ DELAY_MULTIPLIER = 0.0001
 
 
 class Block:
-    id = None
-    node_id = None
 
-    def __init__(self, id, node_id):
+    block_id: int
+    node_id: int
+
+    def __init__(self, block_id: int, node_id: int):
         """Constructor"""
-        self.id = id
+        self.block_id = block_id
         self.node_id = node_id
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         """Is another object is equal to self?"""
         if not isinstance(other, self.__class__):
             raise Exception("Cannot compare objects Block and {}".format(type(other)))
-        return self.id == other.id and self.node_id == other.node_id
+        return self.block_id == other.block_id and self.node_id == other.node_id
 
-    def __ne__(self, other):
+    def __ne__(self, other) -> bool:
         """Is another object is not equal to self?"""
         return not self.__eq__(other)
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Represent instance of the class as a string."""
         return "B{}byN{}".format(
-            self.id,
+            self.block_id,
             self.node_id,
         )
 
 
 class Message:
-    # Possible message types. Use Message.TYPE_APPROVE to send an approve.
+
+    # Possible message types. e.g. Use Message.TYPE_APPROVE to send an approve.
     TYPE_COMMIT = "commit"
     TYPE_APPROVE = "approve"
     TYPE_VOTE = "vote"
     TYPE_APPROVE_STATUS_UPDATE = "approve_status_update"
     TYPE_VOTE_STATUS_UPDATE = "vote_status_update"
 
-    node_id = None
-    message_type = None
-    block = None
-    messages_chain = None
+    node_id: int
+    message_type: str
+    block: Block
+    messages_chain: Union[list, dict, None]
 
-    def __init__(self, node_id, message_type, block=None, messages_chain=None):
+    def __init__(
+        self,
+        node_id: int,
+        message_type: str,
+        block: Union[None, Block] = None,
+        messages_chain: Union[list, dict, None] = None,
+    ):
         """Constructor"""
         self.node_id = node_id
         self.message_type = message_type
         self.block = block
         self.messages_chain = messages_chain
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Represent instance of the class as a string."""
         return "[{message_type}] B{block_id} messages_chain size = {messages_chain_size}".format(
             message_type=self.message_type,
-            block_id=self.block.id if self.block else "-",
+            block_id=self.block.block_id if self.block else "-",
             messages_chain_size=len(self.messages_chain) if self.messages_chain else 0,
         )
 
@@ -78,39 +87,49 @@ class Message:
 class Transport:
 
     # Messages pool.
-    pool = None
+    # Always kept reverse sorted by "delivery_time" key in each element.
+    # First that needs to be delivered is the last element.
+    pool: List[MessageWrapper]
 
     # Nodes map
-    nodes_map = None
+    nodes_map = List[dict]
     """
-    {
+    [{
         node_id: {
             "x": 123,   # X coordinate on a plane.
             "y": 456,   # Y coordinate on a plane.
             "drop_rate": 5, # In percent [0, 100]
             "connection_speed": 0.7, # how fast are the messages transferred (0, 1]
         }
-    }
+    },...]
     """
 
-    def __init__(self, nodes_count, max_distance=MAX_DISTANCE):
+    def __init__(self, nodes_count: int, max_distance: int = MAX_DISTANCE):
         self.pool = []
+        self.nodes_map = []
         for i in range(nodes_count):
-            self.nodes_map[i] = {
-                "x": random.uniform(0, MAX_DISTANCE),
-                "y": random.uniform(0, MAX_DISTANCE),
-                "drop_rate": LOST_MESSAGES_PERCENTAGE,
-                "connection_speed": random.uniform(np.nextafter(0, 1), np.nextafter(1, 2)),
-            }
+            self.nodes_map.append(
+                {
+                    "x": random.uniform(0, max_distance),
+                    "y": random.uniform(0, max_distance),
+                    "drop_rate": LOST_MESSAGES_PERCENTAGE,
+                    "connection_speed": random.uniform(np.nextafter(0, 1), np.nextafter(1, 2)),
+                }
+            )
 
-    def get_distance(self, from_node_id, to_node_id):
-        # Get distance between two nodes by id.
+    def _pool_set(self, message_wrapper: MessageWrapper):
+        """Save a message into the pool."""
+        self.pool.append(message_wrapper)
+        self.pool = sorted(self.pool, key=lambda x: x.time_deliver, reverse=True)
+
+    def get_distance(self, from_node_id: int, to_node_id: int) -> float:
+        """Get distance between two nodes by block_id."""
         return math.sqrt(
             (self.nodes_map[from_node_id]['x'] - self.nodes_map[to_node_id]['x']) ** 2 +
             (self.nodes_map[from_node_id]['y'] - self.nodes_map[to_node_id]['y']) ** 2
         )
 
-    def connection_delay(self, from_node_id, to_node_id):
+    def connection_delay(self, from_node_id: int, to_node_id: int) -> float:
         """Get connection delay between two nodes in seconds."""
         distance = self.get_distance(from_node_id, to_node_id)
         avg_connection_speed = (
@@ -119,10 +138,20 @@ class Transport:
         ) / 2.0
         return distance * avg_connection_speed * DELAY_MULTIPLIER
 
-    def send(self, message: Message, from_id: int, to_id: int) -> bool:
+    def send(self, message: Message, to_id: int) -> bool:
+        """
+        Add a message to the send pool.
+        :param message: Message object.
+        :param to_id: Node block_id to send to.
+        :return: True if added, False if the connection was broken.
+        """
+
+        # Get sender node block_id.
+        from_id = message.node_id
 
         # Randomly drop this message.
         if random.randint(0, 100) <= (self.nodes_map[from_id]['drop_rate']+self.nodes_map[to_id]['drop_rate'])/2.0:
+            # Log
             logging.info("Message N{}->N{} {} was dropped due to the random drop rule.".format(
                 from_id,
                 to_id,
@@ -134,144 +163,175 @@ class Transport:
         time_now = time.time()
         time_deliver = time_now + self.connection_delay(from_id, to_id)
 
-        self.pool.append(
-            self.MessageWrapper(
-                message=message,
-                from_id=from_id,
-                to_id=to_id,
-                time_send=time_now,
-                time_deliver=time_deliver,
-            )
+        # Prepare the message wrapper.
+        message_wrapper = self.MessageWrapper(
+            message=message,
+            to_id=to_id,
+            time_send=time_now,
+            time_deliver=time_deliver,
         )
+
+        # Save to the pool.
+        self._pool_set(message_wrapper)
+
+        # Log.
+        logging.info(message_wrapper)
+
+        return True
+
+    def receive(self) -> Union[None, Tuple[Message, int]]:
+        """
+        Receive the next message.
+        :return: Tuple[Message, from node block_id, to node block_id] or None if there are no messages left.
+        """
+
+        # Get the message.
+        try:
+            message_wrapper = self.pool.pop()
+        except IndexError:
+            return None
+
+        # Wait till delivery time.
+        time_till_delivery = message_wrapper.time_deliver - time.time()
+        if time_till_delivery > 0:
+            time.sleep(time_till_delivery)
+
+        return message_wrapper.message, message_wrapper.to_id
 
     class MessageWrapper:
 
-        message = None
-        time_deliver = None
-        time_send = None
+        message: Message
+        time_deliver: float
+        time_send: float
+        to_id: int
+        from_id: int    # Shadow parameter that is proxied from the message body.
 
-        def __init__(self, message, from_id, to_id, time_deliver=None, time_send=None):
+        def __init__(
+            self,
+            message: Message,
+            to_id: int,
+            time_deliver: Union[float, None] = None,
+            time_send: Union[float, None] = None,
+        ):
             self.time_deliver = time_deliver if time_deliver else time.time()
             self.time_send = time_send if time_send else time.time()
-            self.from_id = from_id
             self.to_id = to_id
             self.message = copy.deepcopy(message)
 
+        def __getattr__(self, item):
+            """Proxies from_id from the message body."""
+            if item == 'from_id':
+                return self.message.node_id
+            else:
+                return self.__getattribute__(item)
+
+        def __str__(self):
+            """String representation of self."""
+            return "Message send N{from_id}->N{to_id}: {message}".format(
+                from_id=self.from_id,
+                to_id=self.to_id,
+                message=self.message,
+            )
+
 
 class Node:
+
     # Possible actions that a node could take
     ACTION_APPROVE = "approve"
     ACTION_VOTE = "vote"
 
     # Running list of taken actions by this node.
-    actions_taken = None
+    actions_taken: List[str]
 
     # ID of the node.
-    id = None
-
-    # Coordinates of the node.
-    x, y = None, None
+    node_id: int
 
     # Pointer to the list of all nodes.
-    nodes = None
+    nodes: List[Node]
 
     # received messages log - not used yet
-    messages_in = []
+    messages_in: List[Message]
 
     # sent messages log - not used yet
-    messages_out = []
+    messages_out: List[Message]
 
     # Speed of connection between nodes (0,1]
-    connection_speed = None
+    connection_speed: float
 
     # Current chain.
-    chain = None
+    chain: List[Block]
 
     # Current next block candidate.
-    block_candidate = None
+    block_candidate: Union[None, Block]
 
     # Incoming approve messages.
-    messages_approve = None
+    messages_approve: dict
 
     # Incoming vote messages.
-    messages_vote = None
+    messages_vote: dict
 
-    def __init__(self, nodes, id, x=0.0, y=0.0, connection_speed=0.5, chain=None):
+    # Link to a global Transport object
+    transport: Transport
+
+    def __init__(self, nodes: List[Node], node_id: int, transport: Transport, chain: Union[List, None] = None):
         """Constructor"""
-
-        # Validation
-        if not 0 < connection_speed <= 1:
-            raise Exception("connection_speed must be between 0 and 1")
-        if not isinstance(chain, list):
-            raise Exception("chain must be a list, not {}".format(type(chain)))
-
         # Assignment
-        self.id = id
-        self.x, self.y = x * 1.0, y * 1.0
-        self.connection_speed = connection_speed
-        self.chain = chain
+        self.node_id = node_id
+        self.chain = chain if chain else []
         self.messages_approve = {}
         self.messages_vote = {}
         self.actions_taken = []
         self.block_candidate = None
-        # self.messages_approve_status_update = {}
+        self.transport = transport
         nodes.append(self)
         self.nodes = nodes
 
-    def get_distance_to(self, node_id):
-        # Get distance between self and passed node_id.
-        return math.sqrt((self.x - self.nodes[node_id].x) ** 2 + (self.y - self.nodes[node_id].y) ** 2)
-
-    async def connection_delay(self, node_id):
-        """Delay the program by distance * connection_speed in miliseconds."""
-        distance = self.get_distance_to(node_id)
-        await asyncio.sleep(distance * self.connection_speed * DELAY_MULTIPLIER)
-
-    def get_next_block_id(self):
+    def get_next_block_id(self) -> int:
         return len(self.chain) + 1
 
-    def get_next_block_master_id(self):
+    def get_next_block_master_id(self) -> int:
         # Get next block master node ID
         # This assumes that nodes never change after initiating the group.
         return self.get_next_block_id() % len(self.nodes)
 
     def verify_block(self, block: Block) -> bool:
         # Verifies if a block is real.
-        if block.id % len(self.nodes) == block.node_id:
+        if block.block_id % len(self.nodes) == block.node_id:
             return True
         return False
 
-    async def gen_commit(self):
-        if self.id != self.get_next_block_master_id():
-            # logging.error("Node #{} tried to generate a commit, while it should have been generated by {}".format(
-            #     self.id,
-            #     self.get_next_block_master_id(self),
-            # ))
-            return None
+    def gen_commit(self) -> bool:
+        if self.node_id != self.get_next_block_master_id():
+            logging.error("Node #{} tried to generate a commit, while it should have been generated by {}".format(
+                self.node_id,
+                self.get_next_block_master_id(),
+            ))
+            return False
 
         # Gen new block.
         block = Block(
-            id=self.get_next_block_id(),
-            node_id=self.id,
+            block_id=self.get_next_block_id(),
+            node_id=self.node_id,
         )
 
         self.block_candidate = block
 
         # Gen broadcast message.
         message = Message(
-            node_id=self.id,
+            node_id=self.node_id,
             message_type=Message.TYPE_COMMIT,
             block=block,
         )
 
-        await self.broadcast(message)
+        self.broadcast(message)
+        return True
 
     def forge_candidate_block(self):
         """ Moves candidate block onto the main chain and cleans supporting vars. """
         if not self.block_candidate:
-            raise Exception("Trying to forge a block candidate while it doesn't exist. Node #{}".format(self.id))
+            raise Exception("Trying to forge a block candidate while it doesn't exist. Node #{}".format(self.node_id))
 
-        logging.info("N{} B{} is forged.".format(self.id, self.block_candidate.id))
+        logging.info("N{} B{} is forged.".format(self.node_id, self.block_candidate.block_id))
 
         self.chain.append(self.block_candidate)
         self.block_candidate = None
@@ -279,54 +339,42 @@ class Node:
         self.messages_vote = {}
         self.actions_taken = []
 
-    async def try_forging_candidate_block(self):
+    def try_forging_candidate_block(self):
         if not self.block_candidate:
-            logging.info("N{} Unsuccessful forge attempt, there is no candidate block.".format(self.id))
+            logging.info("N{} Unsuccessful forge attempt, there is no candidate block.".format(self.node_id))
             return False
 
         if len(self.messages_vote) <= len(self.nodes) / 2.0:
             logging.info(
-                "N{} B{} Unsuccessful forge attempt, not enough votes.".format(self.id, self.block_candidate.id))
+                "N{} B{} Unsuccessful forge attempt, not enough votes.".format(
+                    self.node_id,
+                    self.block_candidate.block_id,
+                )
+            )
             return False
 
         # This means that we have enough votes for Approve Status Update, so we broadcast everything:
-        await self.send_vote_once()
+        self.send_vote_once()
 
         # Forge the block and add it to the chain.
         self.forge_candidate_block()
 
         return True
 
-    async def send_message(self, node_id, message):
-        """Send a message to a specific node."""
-
-        logging.info("Message send N{}->N{}: {}".format(
-            self.id,
-            node_id,
-            message,
-        ))
-
-        # Randomly drop connection.
-        if random.randint(0, 100) < LOST_MESSAGES_PERCENTAGE:
-            return
-        # Introduce the delay.
-        await self.connection_delay(node_id)
-        await self.nodes[node_id].receive(copy.deepcopy(message))
-
-    async def broadcast(self, message: Message, exclude_node_ids=None):
+    def broadcast(self, message: Message, exclude_node_ids=None):
         """ Send message to everyone. """
         if isinstance(exclude_node_ids, list):
-            exclude_node_ids.append(self.id)
+            exclude_node_ids.append(self.node_id)
         else:
-            exclude_node_ids = [self.id]
+            exclude_node_ids = [self.node_id]
 
         for i in range(len(self.nodes)):
             # Skipp sending messages to self.
             if i in exclude_node_ids:
                 continue
-            await self.send_message(node_id=i, message=message)
+            self.transport.send(message, to_id=i)
 
-    async def send_approve_once(self):
+    def send_approve_once(self):
         """Send approval message to everyone once."""
         if self.ACTION_APPROVE in self.actions_taken:
             return False
@@ -334,17 +382,19 @@ class Node:
         # Save the action we are taking.
         self.actions_taken.append(self.ACTION_APPROVE)
 
+        # Prepare the message.
         message_out = Message(
-            node_id=self.id,
+            node_id=self.node_id,
             message_type=Message.TYPE_APPROVE,
             block=self.block_candidate,
         )
+
         # Save approve message into our own log as well.
-        self.messages_approve[self.id] = message_out
-        await self.broadcast(message_out)
+        self.messages_approve[self.node_id] = message_out
+        self.broadcast(message_out)
         return True
 
-    async def send_vote_once(self):
+    def send_vote_once(self):
         """Send vote message to everyone once."""
         if self.ACTION_VOTE in self.actions_taken:
             return False
@@ -352,23 +402,26 @@ class Node:
         # Save the action we are taking.
         self.actions_taken.append(self.ACTION_VOTE)
 
+        # Prepare the message.
         message_out = Message(
-            node_id=self.id,
+            node_id=self.node_id,
             block=self.block_candidate,
             message_type=Message.TYPE_VOTE,
-            # TODO: This should have a separate diff for each node with only messagess that they need to reach approval.
-            messages_chain={**self.messages_vote, **{self.id: self.messages_approve}}
+            # TODO: This should have a separate diff for each node with only messages that they need to reach approval.
+            messages_chain={**self.messages_vote, **{self.node_id: self.messages_approve}}
         )
-        await self.broadcast(message_out)
+
+        # Send
+        self.broadcast(message_out)
         return True
 
-    async def receive_commit(self, message_in: Message) -> bool:
+    def receive_commit(self, message_in: Message) -> bool:
         """Receive a commit message."""
         if self.block_candidate:
             # TODO: I already have a candidate, this is phishy.
             logging.info(
-                "N{} received a commit from N{} and discarted it because there is alredy a candidate.".format(
-                    self.id,
+                "N{} received a commit from N{} and discarded it because there is already a candidate.".format(
+                    self.node_id,
                     message_in.node_id,
                 ))
             return False
@@ -376,72 +429,83 @@ class Node:
             # Save the block and send approve to everyone.
             self.block_candidate = message_in.block
 
-            logging.info("N{} received a commit from N{} and saved it.".format(self.id, message_in.node_id))
+            logging.info("N{} received a commit from N{} and saved it.".format(self.node_id, message_in.node_id))
 
-            await self.send_approve_once()
+            self.send_approve_once()
 
             return True
 
-    async def receive_approve(self, message_in: Message) -> bool:
+    def receive_approve(self, message_in: Message) -> bool:
         """Receive an approve message."""
         # Save new block as a candidate if we do not already have it.
         # This is the case when we got an approve before a commit.
         if not self.block_candidate:
             self.block_candidate = message_in.block
-            await self.send_approve_once()
+            self.send_approve_once()
 
         if message_in.node_id in self.messages_approve:
             # We already have this message, so we disregard it.
-            logging.info("N{} received an approve from N{}, but already had it.".format(self.id, message_in.node_id))
+            logging.info(
+                "N{} received an approve from N{}, but already had it.".format(
+                    self.node_id,
+                    message_in.node_id,
+                )
+            )
             return True
 
         self.messages_approve[message_in.node_id] = message_in
-        logging.info("N{} received an approve from N{} and saved it.".format(self.id, message_in.node_id))
+        logging.info("N{} received an approve from N{} and saved it.".format(self.node_id, message_in.node_id))
 
         # Check if we have enough approve votes, we send a status update.
         if len(self.messages_approve) > (len(self.nodes) - 1) / 2.0:
-            print("[{}] Enough votes".format(self.id))
+            print("[{}] Enough votes".format(self.node_id))
             message_out = Message(
-                node_id=self.id,
+                node_id=self.node_id,
                 block=self.block_candidate,
                 message_type=Message.TYPE_APPROVE_STATUS_UPDATE,
-                # TODO: This should have a separate diff for each node with only messagess that they need to reach approval.
+                # TODO: This should have a separate diff for each node with only messages
+                # that they need to reach approval.
                 messages_chain=self.messages_approve,
             )
-            await self.broadcast(message_out, exclude_node_ids=[message_in.node_id])
+            self.broadcast(message_out, exclude_node_ids=[message_in.node_id])
 
         return True
 
-    async def receive_approve_status_update(self, message_in: Message) -> bool:
+    def receive_approve_status_update(self, message_in: Message) -> bool:
         """Receive an approve status update message."""
         # Verify message chain.
-        for message_in_chain in message_in.messages_chain:
-            if not self.verify_block(message_in.block):
+        for _, message_in_chain in message_in.messages_chain.items():
+            if not self.verify_block(message_in_chain.block):
                 # Got a message with a wrong block.
                 logging.error("N{} received an approve status update from N{} with a wrong block".format(
-                    self.id,
+                    self.node_id,
                     message_in.node_id,
                 ))
                 return False
         if len(message_in.messages_chain) <= (len(self.nodes) - 1) / 2.0:
             # This means that there is not enough votes for approval.
-            logging.error("N{} received an approve status update from N{} with not enough votes in it".format(self.id,
-                                                                                                              message_in.node_id))
+            logging.error(
+                "N{} received an approve status update from N{} with not enough votes in it".format(
+                    self.node_id,
+                    message_in.node_id,
+                )
+            )
             return False
 
         if self.block_candidate and self.block_candidate != message_in.block:
             # This means that my block is different from the one that is being approved.
             # TODO: I should probably raise a flag or change my mind.
             logging.error(
-                "N{} received an approve status update from N{} with a block ({}) that differs from my candidate ({}).".format(
-                    self.id,
+                "N{} received an approve status update from N{} with a block ({}) "
+                "that differs from my candidate ({}).".format(
+                    self.node_id,
                     message_in.node_id,
                     message_in.block,
                     self.block_candidate,
                 ))
             return False
 
-        ### At this point the blocks match and the messages chan from that node is correct.
+        ### At this point the blocks match and the messages chan from that node is correct. ###
 
         # Update our messages_approve with the new info from the message.
         self.messages_approve.update(message_in.messages_chain)
@@ -450,11 +514,11 @@ class Node:
         self.messages_vote[message_in.node_id] = message_in.messages_chain
 
         # Try forging the candidate.
-        await self.try_forging_candidate_block()
+        self.try_forging_candidate_block()
 
         return True
 
-    async def receive_vote_status_update(self, message_in: Message) -> bool:
+    def receive_vote_status_update(self, message_in: Message) -> bool:
         """Receive a vote status update message."""
         # If we are getting this, it means that the block is forged by others, but not us.
         # So we update the info and try to forge ourselves.
@@ -478,27 +542,28 @@ class Node:
         self.messages_vote[message_in.node_id] = message_in.messages_chain
 
         # Now with all the new info, let's try to forge the block.
-        await self.try_forging_candidate_block()
+        self.try_forging_candidate_block()
 
         return True
 
-    async def receive(self, message_in: Message):
+    def receive(self, message_in: Message):
         """Receive a message from another node."""
 
         # Check if the message has a block.
         if not message_in.block:
             logging.error(
-                "N{} received a message from N{} and discarted because there is no block attached.".format(
-                    self.id,
+                "N{} received a message from N{} and discarded because there is no block attached.".format(
+                    self.node_id,
                     message_in.node_id,
-            ))
+                )
+            )
             return False
 
         # First we verify sent block in the message. If it's bad, we disregard the message.
         if not self.verify_block(message_in.block):
             logging.error(
                 "N{} received a message from N{} and discarded it because the block is invalid.".format(
-                    self.id,
+                    self.node_id,
                     message_in.node_id
                 )
             )
@@ -508,8 +573,8 @@ class Node:
         if message_in.block in self.chain:
             # TODO: We should probably send the proof message to the requesting node, so it can forge the block as well.
             logging.info(
-                "N{} received a message from N{} and discarted it because this block is already forged.".format(
-                    self.id,
+                "N{} received a message from N{} and discarded it because this block is already forged.".format(
+                    self.node_id,
                     message_in.node_id,
                 )
             )
@@ -520,50 +585,59 @@ class Node:
             self.block_candidate = message_in.block
 
             # Since we just got a new block and verified it to be good, we broadcast an approval for it.
-            await self.send_approve_once()
+            self.send_approve_once()
 
         # COMMIT
         if message_in.message_type == Message.TYPE_COMMIT:
-            return await self.receive_commit(message_in)
+            return self.receive_commit(message_in)
 
         # APPROVE
         elif message_in.message_type == Message.TYPE_APPROVE:
-            return await self.receive_approve(message_in)
+            return self.receive_approve(message_in)
 
         # APPROVE_STATUS_UPDATE
         elif message_in.message_type == Message.TYPE_APPROVE_STATUS_UPDATE:
-            return await self.receive_approve_status_update(message_in)
+            return self.receive_approve_status_update(message_in)
 
         # VOTE_STATUS_UPDATE
         elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
-            return await self.receive_vote_status_update(message_in)
+            return self.receive_vote_status_update(message_in)
 
-    async def run(self):
+    def run(self):
         # Main node run method called from main()
-        logging.info("Node {} started. Speed={}".format(self.id, self.connection_speed))
+        logging.info("Node {} started.".format(self.node_id))
 
         # Try generating the block if we are the appropriate node.
-        await self.gen_commit()
+        self.gen_commit()
 
 
-async def main():
+def main():
+    # Setup logging.
     logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
+    # Start a transport.
+    transport = Transport(nodes_count=NODE_COUNT)
+
     # Generate nodes.
-    nodes = []
+    nodes: List[Node] = []
     for i in range(NODE_COUNT):
         Node(
             nodes=nodes,
-            id=i,
-            x=random.uniform(0, MAX_DISTANCE),
-            y=random.uniform(0, MAX_DISTANCE),
-            connection_speed=random.uniform(np.nextafter(0, 1), np.nextafter(1, 2)),
+            node_id=i,
+            transport=transport,
             chain=[],
         )
     logging.info("Nodes generated.")
 
     # Run node that generates the first block.
-    await nodes[nodes[0].get_next_block_master_id()].run()
+    nodes[nodes[0].get_next_block_master_id()].run()
+
+    # Main message exchange loop.
+    next_message = transport.receive()
+    while next_message:
+        message, to_node_id = next_message
+        nodes[to_node_id].receive(message)
+        next_message = transport.receive()
 
     succeeded = 0
     for i in range(len(nodes)):
@@ -579,4 +653,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
