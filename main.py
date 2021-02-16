@@ -11,13 +11,13 @@ import copy
 MAX_DISTANCE = 1000.0
 
 # Number of nodes.
-NODE_COUNT = 3
+NODE_COUNT = 8
 
 # Lost Message % [0, 100) on send
-LOST_MESSAGES_PERCENTAGE = 0.0
+LOST_MESSAGES_PERCENTAGE = 30.0
 
 # Distance between nodes gets multiplied by this factor and converted to seconds.
-DELAY_MULTIPLIER = 0.0001
+DELAY_MULTIPLIER = 0.001
 
 
 class Block:
@@ -150,7 +150,7 @@ class Transport:
         from_id = message.node_id
 
         # Randomly drop this message.
-        if random.randint(0, 100) <= (self.nodes_map[from_id]['drop_rate']+self.nodes_map[to_id]['drop_rate'])/2.0:
+        if random.randint(0, 100) < (self.nodes_map[from_id]['drop_rate']+self.nodes_map[to_id]['drop_rate'])/2.0:
             # Log
             logging.info("Message N{}->N{} {} was dropped due to the random drop rule.".format(
                 from_id,
@@ -175,7 +175,7 @@ class Transport:
         self._pool_set(message_wrapper)
 
         # Log.
-        logging.info(message_wrapper)
+        logging.info("Send {}".format(message_wrapper))
 
         return True
 
@@ -191,10 +191,13 @@ class Transport:
         except IndexError:
             return None
 
-        # Wait till delivery time.
+        # Wait till the delivery time.
         time_till_delivery = message_wrapper.time_deliver - time.time()
         if time_till_delivery > 0:
             time.sleep(time_till_delivery)
+
+        # Log.
+        logging.info("Receive {}".format(message_wrapper))
 
         return message_wrapper.message, message_wrapper.to_id
 
@@ -227,7 +230,7 @@ class Transport:
 
         def __str__(self):
             """String representation of self."""
-            return "Message send N{from_id}->N{to_id}: {message}".format(
+            return "Message N{from_id}->N{to_id}: {message}".format(
                 from_id=self.from_id,
                 to_id=self.to_id,
                 message=self.message,
@@ -248,15 +251,6 @@ class Node:
 
     # Pointer to the list of all nodes.
     nodes: List[Node]
-
-    # received messages log - not used yet
-    messages_in: List[Message]
-
-    # sent messages log - not used yet
-    messages_out: List[Message]
-
-    # Speed of connection between nodes (0,1]
-    connection_speed: float
 
     # Current chain.
     chain: List[Block]
@@ -339,7 +333,7 @@ class Node:
         self.messages_vote = {}
         self.actions_taken = []
 
-    def try_forging_candidate_block(self):
+    def try_forging_candidate_block(self) -> bool:
         if not self.block_candidate:
             logging.info("N{} Unsuccessful forge attempt, there is no candidate block.".format(self.node_id))
             return False
@@ -361,7 +355,7 @@ class Node:
 
         return True
 
-    def broadcast(self, message: Message, exclude_node_ids=None):
+    def broadcast(self, message: Message, exclude_node_ids: Union[None, List[int]] = None):
         """ Send message to everyone. """
         if isinstance(exclude_node_ids, list):
             exclude_node_ids.append(self.node_id)
@@ -369,7 +363,7 @@ class Node:
             exclude_node_ids = [self.node_id]
 
         for i in range(len(self.nodes)):
-            # Skipp sending messages to self.
+            # Skipp sending messages excluded list.
             if i in exclude_node_ids:
                 continue
             self.transport.send(message, to_id=i)
@@ -415,25 +409,25 @@ class Node:
         self.broadcast(message_out)
         return True
 
-    def receive_commit(self, message_in: Message) -> bool:
-        """Receive a commit message."""
-        if self.block_candidate:
-            # TODO: I already have a candidate, this is phishy.
-            logging.info(
-                "N{} received a commit from N{} and discarded it because there is already a candidate.".format(
-                    self.node_id,
-                    message_in.node_id,
-                ))
-            return False
-        else:
-            # Save the block and send approve to everyone.
-            self.block_candidate = message_in.block
-
-            logging.info("N{} received a commit from N{} and saved it.".format(self.node_id, message_in.node_id))
-
-            self.send_approve_once()
-
-            return True
+    # def receive_commit(self, message_in: Message) -> bool:
+    #     """Receive a commit message."""
+    #     if self.block_candidate:
+    #         # TODO: I already have a candidate, this is phishy.
+    #         logging.info(
+    #             "N{} received a commit from N{} and discarded it because there is already a candidate.".format(
+    #                 self.node_id,
+    #                 message_in.node_id,
+    #             ))
+    #         return False
+    #     else:
+    #         # Save the block and send approve to everyone.
+    #         self.block_candidate = message_in.block
+    #
+    #         logging.info("N{} received a commit from N{} and saved it.".format(self.node_id, message_in.node_id))
+    #
+    #         self.send_approve_once()
+    #
+    #         return True
 
     def receive_approve(self, message_in: Message) -> bool:
         """Receive an approve message."""
@@ -454,11 +448,10 @@ class Node:
             return True
 
         self.messages_approve[message_in.node_id] = message_in
-        logging.info("N{} received an approve from N{} and saved it.".format(self.node_id, message_in.node_id))
 
         # Check if we have enough approve votes, we send a status update.
         if len(self.messages_approve) > (len(self.nodes) - 1) / 2.0:
-            print("[{}] Enough votes".format(self.node_id))
+            logging.info("N{} has enough approves for B{}".format(self.node_id, self.block_candidate.block_id))
             message_out = Message(
                 node_id=self.node_id,
                 block=self.block_candidate,
@@ -467,7 +460,7 @@ class Node:
                 # that they need to reach approval.
                 messages_chain=self.messages_approve,
             )
-            self.broadcast(message_out, exclude_node_ids=[message_in.node_id])
+            self.broadcast(message_out)
 
         return True
 
@@ -546,7 +539,7 @@ class Node:
 
         return True
 
-    def receive(self, message_in: Message):
+    def receive(self, message_in: Message) -> bool:
         """Receive a message from another node."""
 
         # Check if the message has a block.
@@ -589,7 +582,9 @@ class Node:
 
         # COMMIT
         if message_in.message_type == Message.TYPE_COMMIT:
-            return self.receive_commit(message_in)
+            # Commit message is fully handled by the block validation. There is no need to do anything else.
+            pass
+        #     return self.receive_commit(message_in)
 
         # APPROVE
         elif message_in.message_type == Message.TYPE_APPROVE:
@@ -599,9 +594,9 @@ class Node:
         elif message_in.message_type == Message.TYPE_APPROVE_STATUS_UPDATE:
             return self.receive_approve_status_update(message_in)
 
-        # VOTE_STATUS_UPDATE
-        elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
-            return self.receive_vote_status_update(message_in)
+        # # VOTE_STATUS_UPDATE
+        # elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
+        #     return self.receive_vote_status_update(message_in)
 
     def run(self):
         # Main node run method called from main()
