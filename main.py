@@ -1,11 +1,17 @@
 from __future__ import annotations
-from typing import Tuple, List, Union
+from typing import Tuple, List, Union, Set
 import math
 import random
 import logging
 import numpy as np
 import time
 import copy
+
+# Choose between logging.INFO, logging.ERROR, logging.DEBUG
+LOGGING_LEVEL = logging.DEBUG
+
+# Should nodes store extra profs and votes.
+KEEP_EXCESSIVE_MESSAGES = False
 
 # Maximum X, Y distance.
 MAX_DISTANCE = 10.0
@@ -17,7 +23,7 @@ NODE_COUNT = 16
 GENERATE_BLOCKS = 10
 
 # Lost Message % [0, 100) on send
-LOST_MESSAGES_PERCENTAGE = 50.0
+LOST_MESSAGES_PERCENTAGE = 10.0
 
 # Distance between nodes gets multiplied by this factor and converted to seconds.
 DELAY_MULTIPLIER = 0.000001
@@ -259,14 +265,87 @@ class Transport:
             )
 
 
-class Node:
+class Candidate:
 
     # Possible actions that a node could take
     ACTION_APPROVE = "approve"
+    ACTION_APPROVE_STATUS_UPDATE = "approve_status_update"
     ACTION_VOTE = "vote"
+    ACTION_VOTE_STATUS_UPDATE = "vote_status_update"
 
-    # Running list of taken actions by this node.
-    actions_taken: List[str]
+    POSSIBLE_ACTIONS = (
+        ACTION_APPROVE,
+        ACTION_APPROVE_STATUS_UPDATE,
+        ACTION_VOTE,
+        ACTION_VOTE_STATUS_UPDATE,
+    )
+
+    # Shadow argument. Points to the self.block.block_id
+    block_id: int
+
+    # Candidate block.
+    block: Block
+
+    # Incoming approve messages.
+    messages_approve: dict
+
+    # Incoming vote messages.
+    messages_vote: dict
+
+    # Set of node_ids that we received vote status updates from.
+    vote_status_updates: Set[int]
+
+    # Running list of unique taken actions by this node.
+    actions_taken: Set[str]
+
+    # Defines if the block was forged or not.
+    forged: bool
+
+    def __init__(self, block: Block):
+        self.block = block
+        self.messages_approve = {}
+        self.messages_vote = {}
+        # {
+        #   node_id: [list of node_ids that approved this vote]
+        # }
+        self.vote_status_updates = set()
+        self.actions_taken = set()
+        self.forged = False
+
+    def take_action(self, action: str):
+        """
+        Check if the action was already taken on this candidate.
+        :param action: One of the actions from Candidate.POSSIBLE_ACTIONS
+        """
+        if action not in self.POSSIBLE_ACTIONS:
+            raise Exception("Trying to take an action ({}) that is not allowed. Possible actions: {}".format(
+                action,
+                self.POSSIBLE_ACTIONS,
+            ))
+        self.actions_taken.add(action)
+
+    def check_action(self, action: str) -> bool:
+        """
+        Check if the action was already taken on this candidate.
+        :param action: One of the actions from Candidate.POSSIBLE_ACTIONS
+        :return: True if action has already been taken, False if the action has not yet been taken.
+        """
+        if action not in self.POSSIBLE_ACTIONS:
+            raise Exception("Trying to check an action ({}) that is not allowed. Possible actions: {}".format(
+                action,
+                self.POSSIBLE_ACTIONS,
+            ))
+        return action in self.actions_taken
+
+    def __getattr__(self, item):
+        """Proxies block_id from the block.block_id."""
+        if item == 'block_id':
+            return self.block.block_id
+        else:
+            return self.__getattribute__(item)
+
+
+class Node:
 
     # ID of the node.
     node_id: int
@@ -277,14 +356,17 @@ class Node:
     # Current chain.
     chain: List[Block]
 
-    # Current next block candidate.
-    block_candidate: Union[None, Block]
+    # Dict of candidate blocks and their proofs.
+    candidates: dict
+    """
+        {
+            block_id: Candidate,
+            ...
+        }
+    """
 
-    # Incoming approve messages.
-    messages_approve: dict
-
-    # Incoming vote messages.
-    messages_vote: dict
+    # Pointer to the current active candidate.
+    active_candidate: Union[Candidate, None]
 
     # Link to a global Transport object
     transport: Transport
@@ -294,13 +376,7 @@ class Node:
         # Assignment
         self.node_id = node_id
         self.chain = chain if chain else []
-        self.messages_approve = {}
-        self.messages_vote = {}
-        # {
-        #   node_id: [list of node_ids that approved this vote]
-        # }
-        self.actions_taken = []
-        self.block_candidate = None
+        self.candidates = {}
         self.transport = transport
         nodes.append(self)
         self.nodes = nodes
@@ -325,7 +401,7 @@ class Node:
         :return: True - there is enough approves, False - not enough approves.
         """
         if message_chain is None:
-            if len(self.messages_approve) > (len(self.nodes) - 1) / 2.0:
+            if len(self.active_candidate.messages_approve) > (len(self.nodes) - 1) / 2.0:
                 return True
             return False
         else:
@@ -339,13 +415,16 @@ class Node:
         :return: True - there is enough votes, False - not enough votes.
         """
         if message_chain is None:
-            if len(self.messages_vote) > len(self.nodes) / 2.0:
-                return True
-            return False
+            return len(self.active_candidate.messages_vote) > len(self.nodes) / 2.0
         else:
-            if len(message_chain) > len(self.nodes) / 2.0:
-                return True
-            return False
+            return len(message_chain) > len(self.nodes) / 2.0
+
+    def enough_vote_status_updates(self) -> bool:
+        """
+        Check if we have enough vote status updates in the current candidate to try forging a new block.
+        :return: True - enough votes, False, not enough votes.
+        """
+        return len(self.active_candidate.vote_status_updates) > len(self.nodes) / 2.0
 
     def gen_commit(self) -> bool:
         if self.node_id != self.get_next_block_master_id():
@@ -361,7 +440,8 @@ class Node:
             node_id=self.node_id,
         )
 
-        self.block_candidate = block
+        self.candidates[block.block_id] = Candidate(block)
+        self.active_candidate = self.candidates[block.block_id]
 
         # Gen broadcast message.
         message = Message(
@@ -380,23 +460,25 @@ class Node:
         """
 
         # Block validation
-        if not self.block_candidate:
+        if not self.active_candidate:
             logging.info("N{} Unsuccessful forge attempt, there is no candidate block.".format(self.node_id))
             return False
 
-        # Votes validation
+        # Check if we have enough vote status updates.
+        if not self.enough_vote_status_updates():
+            return False
+
+        # Just in case validating votes, but this should pass if the vote status update has passed.
         if not self.enough_votes():
             return False
 
         # Log successful forge attempt.
-        logging.info("N{} B{} is forged.".format(self.node_id, self.block_candidate.block_id))
+        logging.info("N{} B{} is forged.".format(self.node_id, self.active_candidate.block_id))
 
         # Forge the block and add it to the chain.
-        self.chain.append(self.block_candidate)
-        self.block_candidate = None
-        self.messages_approve = {}
-        self.messages_vote = {}
-        self.actions_taken = []
+        self.chain.append(self.active_candidate.block)
+        self.active_candidate.forged = True
+        self.active_candidate = None
 
         # Try generating the next block if we are the appropriate node.
         self.gen_commit()
@@ -418,67 +500,110 @@ class Node:
 
     def send_approve_once(self):
         """Send approval message to everyone once."""
-        if self.ACTION_APPROVE in self.actions_taken:
+        if Candidate.ACTION_APPROVE in self.active_candidate.actions_taken:
             return False
 
         # Save the action we are taking.
-        self.actions_taken.append(self.ACTION_APPROVE)
+        self.active_candidate.actions_taken.add(Candidate.ACTION_APPROVE)
 
         # Prepare the message.
         message_out = Message(
             node_id=self.node_id,
             message_type=Message.TYPE_APPROVE,
-            block=self.block_candidate,
+            block=self.active_candidate.block,
         )
 
         # Save approve message into our own log as well.
-        self.messages_approve[self.node_id] = message_out
+        self.active_candidate.messages_approve[self.node_id] = message_out
         self.broadcast(message_out)
         return True
 
     def send_vote_once(self):
         """Send vote message to everyone once."""
-        if self.ACTION_VOTE in self.actions_taken:
+        if self.active_candidate.check_action(Candidate.ACTION_VOTE):
+            return False
+
+        # Check if we have enough approve votes, we send a status update.
+        if not self.enough_approves():
             return False
 
         # Save the action we are taking.
-        self.actions_taken.append(self.ACTION_VOTE)
+        self.active_candidate.take_action(Candidate.ACTION_VOTE)
 
         # Save our own vote.
-        self.messages_vote[self.node_id] = self.messages_approve
+        self.active_candidate.messages_vote[self.node_id] = self.active_candidate.messages_approve
 
         # Prepare the message.
         message_out = Message(
             node_id=self.node_id,
-            block=self.block_candidate,
+            block=self.active_candidate.block,
             message_type=Message.TYPE_VOTE,
             # TODO: This should have a separate diff for each node with only messages that they need to reach approval.
             # messages_chain={**self.messages_vote, **{self.node_id: self.messages_approve}}
-            messages_chain=self.messages_approve,
+            messages_chain=self.active_candidate.messages_vote[self.node_id],
         )
 
-        # Send
+        # Send.
         self.broadcast(message_out)
         return True
 
-    def send_vote_status_update(self) -> bool:
+    def send_approve_status_update_once(self) -> bool:
         """
-        Send vote status update if we have enough votes.
+        Send approve status update once if we have enough approves.
+        :return: True - update was sent. False - update was not sent.
+        """
+        if self.active_candidate.check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE):
+            return False
+
+        if not self.enough_approves():
+            return False
+
+        self.active_candidate.take_action(Candidate.ACTION_APPROVE_STATUS_UPDATE)
+
+        message_out = Message(
+            node_id=self.node_id,
+            block=self.active_candidate.block,
+            message_type=Message.TYPE_APPROVE_STATUS_UPDATE,
+            # TODO: This should have a separate diff for each node with only messages
+            # that they need to reach approval.
+            messages_chain=self.active_candidate.messages_approve,
+        )
+        self.broadcast(message_out)
+
+        return True
+
+    def send_vote_status_update_once(self) -> bool:
+        """
+        Send vote status update once if we have enough votes.
         :return: True - update was sent. False - update was not sent.
         """
 
-        if self.enough_votes():
-            message_out = Message(
-                node_id=self.node_id,
-                block=self.block_candidate,
-                message_type=Message.TYPE_VOTE_STATUS_UPDATE,
-                # TODO: This should have a separate diff for each node with only messages
-                # that they need to reach votes.
-                messages_chain=self.messages_vote,
-            )
-            self.broadcast(message_out)
-            return True
-        return False
+        if self.active_candidate.check_action(Candidate.ACTION_VOTE_STATUS_UPDATE):
+            return False
+
+        if not self.enough_votes():
+            return False
+
+        # Prepare the message.
+        message_out = Message(
+            node_id=self.node_id,
+            block=self.active_candidate.block,
+            message_type=Message.TYPE_VOTE_STATUS_UPDATE,
+            # TODO: This should have a separate diff for each node with only messages
+            # that they need to reach votes.
+            messages_chain=self.active_candidate.messages_vote,
+        )
+
+        # Set a flag that we have sent this update out.
+        self.active_candidate.take_action(Candidate.ACTION_VOTE_STATUS_UPDATE)
+
+        # Increment the vote_status update counter with our own info.
+        self.active_candidate.vote_status_updates.add(self.node_id)
+
+        # Broadcast the message.
+        self.broadcast(message_out)
+
+        return True
 
     def receive_commit(self, message_in: Message) -> bool:
         """Receive a commit message."""
@@ -488,9 +613,13 @@ class Node:
     def receive_approve(self, message_in: Message) -> bool:
         """Receive an approve message."""
 
-        if message_in.node_id in self.messages_approve:
+        # If we already voted, we do not need extra approves.
+        if not KEEP_EXCESSIVE_MESSAGES and self.active_candidate.check_action(Candidate.ACTION_VOTE):
+            return False
+
+        if message_in.node_id in self.active_candidate.messages_approve:
             # We already have this message, so we disregard it.
-            logging.info(
+            logging.debug(
                 "N{} received an approve from N{}, but already had it.".format(
                     self.node_id,
                     message_in.node_id,
@@ -498,23 +627,13 @@ class Node:
             )
             return True
 
-        self.messages_approve[message_in.node_id] = message_in
+        self.active_candidate.messages_approve[message_in.node_id] = message_in
 
-        # Check if we have enough approve votes, we send a status update.
-        if self.enough_approves():
-            logging.debug("N{} has enough approves for B{}".format(self.node_id, self.block_candidate.block_id))
-            message_out = Message(
-                node_id=self.node_id,
-                block=self.block_candidate,
-                message_type=Message.TYPE_APPROVE_STATUS_UPDATE,
-                # TODO: This should have a separate diff for each node with only messages
-                # that they need to reach approval.
-                messages_chain=self.messages_approve,
-            )
-            self.broadcast(message_out)
+        # Send approve status update if we need to.
+        self.send_approve_status_update_once()
 
-            # We have enough approves, now we also send out our vote.
-            self.send_vote_once()
+        # We have enough approves, now we also send out our vote.
+        self.send_vote_once()
 
         return True
 
@@ -539,7 +658,7 @@ class Node:
             )
             return False
 
-        if self.block_candidate and self.block_candidate != message_in.block:
+        if self.active_candidate and self.active_candidate.block != message_in.block:
             # This means that my block is different from the one that is being approved.
             # TODO: We need to find the difference and update our chain up to this block.
             logging.error(
@@ -548,14 +667,15 @@ class Node:
                     self.node_id,
                     message_in.node_id,
                     message_in.block,
-                    self.block_candidate,
+                    self.active_candidate.block,
                 ))
             return False
 
         ### At this point the blocks match and the messages chan from that node is correct. ###
 
         # Update our messages_approve with the new info from the message.
-        self.messages_approve.update(message_in.messages_chain)
+        if not self.active_candidate.check_action(Candidate.ACTION_VOTE) or KEEP_EXCESSIVE_MESSAGES:
+            self.active_candidate.messages_approve.update(message_in.messages_chain)
 
         # Save the whole approve message chain for that node.
         # TODO: Comment this out as the other node's approval chain could still fill up and be updated.
@@ -570,7 +690,7 @@ class Node:
         """Receive a vote message."""
 
         # If we already have this message, so we disregard it.
-        if message_in.node_id in self.messages_vote:
+        if message_in.node_id in self.active_candidate.messages_vote:
             logging.info(
                 "N{} received a vote from N{}, but already had it.".format(
                     self.node_id,
@@ -579,14 +699,14 @@ class Node:
             )
             return False
 
-        # Save the vote
-        self.messages_vote[message_in.node_id] = message_in.messages_chain
+        # Save the vote.
+        self.active_candidate.messages_vote[message_in.node_id] = message_in.messages_chain
 
         # Try sending vote status update if we have enough votes.
-        self.send_vote_status_update()
+        self.send_vote_status_update_once()
 
         # Try forging the candidate block.
-        block_forged = self.try_forging_candidate_block()
+        self.try_forging_candidate_block()
 
         return True
 
@@ -597,34 +717,37 @@ class Node:
 
         # Update our vote messages chain.
         for node_id_in in message_in.messages_chain.keys():
-            if node_id_in not in self.messages_vote:
-                self.messages_vote[node_id_in] = message_in.messages_chain[node_id_in]
+            if node_id_in not in self.active_candidate.messages_vote:
+                self.active_candidate.messages_vote[node_id_in] = message_in.messages_chain[node_id_in]
             # TODO: We do not need to update chains for the votes that we already have. They should be the exact same.
             else:
-                if self.messages_vote[node_id_in] != message_in.messages_chain[node_id_in]:
-                    logging.warning(
+                if self.active_candidate.messages_vote[node_id_in] != message_in.messages_chain[node_id_in]:
+                    logging.debug(
                         "N{} received a vote status update from N{}. "
                         "In the payload there was a vote proof for N{}'s vote. "
                         "N{} had a local copy that differs from the received proof.\n"
                         "Local proof: {}\n"
-                        "Received proof: {}\n".format(
+                        "Received proof: {}".format(
                             self.node_id,
                             message_in.node_id,
                             node_id_in,
                             self.node_id,
-                            self.messages_vote[node_id_in],
+                            self.active_candidate.messages_vote[node_id_in],
                             message_in.messages_chain[node_id_in],
                         )
                     )
 
+        # Increment the vote_status update counter with the info we got.
+        self.active_candidate.vote_status_updates.add(message_in.node_id)
+
         # The rest, in theory, should always pass.
         # Since we just got a vote status update that has complete info for this block.
 
-        # Send vote status update if we have enough votes
-        self.send_vote_status_update()
+        # Send vote status update if we need to.
+        self.send_vote_status_update_once()
 
         # Try forging the candidate block.
-        block_forged = self.try_forging_candidate_block()
+        self.try_forging_candidate_block()
 
         return True
 
@@ -663,11 +786,15 @@ class Node:
             return False
 
         # Save new block as a candidate if we do not already have it.
-        if not self.block_candidate:
-            self.block_candidate = message_in.block
-
+        if message_in.block.block_id not in self.candidates:
+            self.candidates[message_in.block.block_id] = Candidate(block=message_in.block)
+            # Set current active candidate.
+            self.active_candidate = self.candidates[message_in.block.block_id]
             # Since we just got a new block and verified it to be good, we broadcast an approval for it.
             self.send_approve_once()
+        else:
+            # Set current active candidate.
+            self.active_candidate = self.candidates[message_in.block.block_id]
 
         # COMMIT
         if message_in.message_type == Message.TYPE_COMMIT:
@@ -675,18 +802,22 @@ class Node:
             return self.receive_commit(message_in)
 
         # APPROVE
+        # TODO
         elif message_in.message_type == Message.TYPE_APPROVE:
             return self.receive_approve(message_in)
 
         # APPROVE_STATUS_UPDATE
+        # TODO
         elif message_in.message_type == Message.TYPE_APPROVE_STATUS_UPDATE:
             return self.receive_approve_status_update(message_in)
 
         # VOTE
+        # TODO
         elif message_in.message_type == Message.TYPE_VOTE:
             return self.receive_vote(message_in)
 
         # VOTE_STATUS_UPDATE
+        # TODO
         elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
             return self.receive_vote_status_update(message_in)
 
@@ -700,7 +831,7 @@ class Node:
 
 def main():
     # Setup logging.
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+    logging.basicConfig(format='%(levelname)s: %(message)s', level=LOGGING_LEVEL)
 
     # Start a transport.
     transport = Transport(nodes_count=NODE_COUNT)
