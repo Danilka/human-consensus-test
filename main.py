@@ -17,7 +17,7 @@ NODE_COUNT = 16
 GENERATE_BLOCKS = 10
 
 # Lost Message % [0, 100) on send
-LOST_MESSAGES_PERCENTAGE = 30.0
+LOST_MESSAGES_PERCENTAGE = 50.0
 
 # Distance between nodes gets multiplied by this factor and converted to seconds.
 DELAY_MULTIPLIER = 0.000001
@@ -77,6 +77,25 @@ class Message:
         self.message_type = message_type
         self.block = block
         self.messages_chain = messages_chain
+
+    def __eq__(self, other) -> bool:
+        """Is another object is equal to self?"""
+        if not isinstance(other, self.__class__):
+            raise Exception("Cannot compare objects Message and {}".format(type(other)))
+        if (self.node_id, self.message_type, self.block) != (other.node_id, other.message_type, other.block):
+            return False
+        if not self.messages_chain and not other.messages_chain:
+            return True
+        if len(self.messages_chain) != len(other.messages_chain):
+            return False
+        for key, val in self.messages_chain.items():
+            if val != other.messages_chain[key]:
+                return False
+        return True
+
+    def __ne__(self, other) -> bool:
+        """Is another object is not equal to self?"""
+        return not self.__eq__(other)
 
     def __str__(self) -> str:
         """Represent instance of the class as a string."""
@@ -434,7 +453,8 @@ class Node:
             block=self.block_candidate,
             message_type=Message.TYPE_VOTE,
             # TODO: This should have a separate diff for each node with only messages that they need to reach approval.
-            messages_chain={**self.messages_vote, **{self.node_id: self.messages_approve}}
+            # messages_chain={**self.messages_vote, **{self.node_id: self.messages_approve}}
+            messages_chain=self.messages_approve,
         )
 
         # Send
@@ -521,7 +541,7 @@ class Node:
 
         if self.block_candidate and self.block_candidate != message_in.block:
             # This means that my block is different from the one that is being approved.
-            # TODO: We should probably raise a flag or change our mind.
+            # TODO: We need to find the difference and update our chain up to this block.
             logging.error(
                 "N{} received an approve status update from N{} with a block ({}) "
                 "that differs from my candidate ({}).".format(
@@ -560,7 +580,7 @@ class Node:
             return False
 
         # Save the vote
-        self.messages_vote[message_in.node_id] = message_in
+        self.messages_vote[message_in.node_id] = message_in.messages_chain
 
         # Try sending vote status update if we have enough votes.
         self.send_vote_status_update()
@@ -579,7 +599,7 @@ class Node:
         for node_id_in in message_in.messages_chain.keys():
             if node_id_in not in self.messages_vote:
                 self.messages_vote[node_id_in] = message_in.messages_chain[node_id_in]
-            # We do not need to update chains for the votes that we already have. They should be the exact same.
+            # TODO: We do not need to update chains for the votes that we already have. They should be the exact same.
             else:
                 if self.messages_vote[node_id_in] != message_in.messages_chain[node_id_in]:
                     logging.warning(
@@ -596,12 +616,6 @@ class Node:
                             message_in.messages_chain[node_id_in],
                         )
                     )
-
-            # We update the local messages_vote with messages from all nodes.
-            self.messages_vote.update(message_in.messages_chain[node_id_in])
-
-        # Save the whole vote message chain for that node.
-        self.messages_vote[message_in.node_id] = message_in.messages_chain
 
         # The rest, in theory, should always pass.
         # Since we just got a vote status update that has complete info for this block.
