@@ -13,6 +13,9 @@ LOGGING_LEVEL = logging.DEBUG
 # Should nodes store extra profs and votes.
 KEEP_EXCESSIVE_MESSAGES = False
 
+# Maximum number of main loop cycles.
+MAX_LOOP_ITERATIONS = 10**7
+
 # Maximum X, Y distance.
 MAX_DISTANCE = 10.0
 
@@ -23,7 +26,7 @@ NODE_COUNT = 16
 GENERATE_BLOCKS = 10
 
 # Lost Message % [0, 100) on send
-LOST_MESSAGES_PERCENTAGE = 10.0
+LOST_MESSAGES_PERCENTAGE = 40.0
 
 # Distance between nodes gets multiplied by this factor and converted to seconds.
 DELAY_MULTIPLIER = 0.000001
@@ -31,13 +34,20 @@ DELAY_MULTIPLIER = 0.000001
 
 class Block:
 
+    # Block ID.
     block_id: int
+
+    # ID of the node that created the block.
     node_id: int
+
+    # Time created.
+    created: float
 
     def __init__(self, block_id: int, node_id: int):
         """Constructor"""
         self.block_id = block_id
         self.node_id = node_id
+        self.created = time.time()
 
     def __eq__(self, other) -> bool:
         """Is another object is equal to self?"""
@@ -207,27 +217,27 @@ class Transport:
 
         return True
 
-    def receive(self) -> Union[None, Tuple[Message, int]]:
+    def receive(self) -> Union[List[Tuple[Message, int]]]:
         """
-        Receive the next message.
-        :return: Tuple[Message, from node block_id, to node block_id] or None if there are no messages left.
+        Receive messages that are due.
+        :return:    List of tuples with (Message, to_node_id) or an empty list if there are no messages left.
+                    Ordered by first message is first to be delivered.
         """
 
-        # Get the message.
+        messages_to_deliver = []
+        time_now = time.time()
         try:
-            message_wrapper = self.pool.pop()
+            while self.pool[-1].time_deliver <= time_now:
+                # Pull the message.
+                message_wrapper = self.pool.pop()
+                # Log.
+                logging.debug("Receive {}".format(message_wrapper))
+                # Save to the output.
+                messages_to_deliver.append((message_wrapper.message, message_wrapper.to_id))
         except IndexError:
-            return None
+            pass
 
-        # Wait till the delivery time.
-        time_till_delivery = message_wrapper.time_deliver - time.time()
-        if time_till_delivery > 0:
-            time.sleep(time_till_delivery)
-
-        # Log.
-        logging.debug("Receive {}".format(message_wrapper))
-
-        return message_wrapper.message, message_wrapper.to_id
+        return messages_to_deliver
 
     class MessageWrapper:
 
@@ -377,6 +387,7 @@ class Node:
         self.node_id = node_id
         self.chain = chain if chain else []
         self.candidates = {}
+        self.active_candidate = None
         self.transport = transport
         nodes.append(self)
         self.nodes = nodes
@@ -480,8 +491,9 @@ class Node:
         self.active_candidate.forged = True
         self.active_candidate = None
 
-        # Try generating the next block if we are the appropriate node.
-        self.gen_commit()
+        # Moved to self.run() method.
+        # # Try generating the next block if we are the appropriate node.
+        # self.gen_commit()
 
         return True
 
@@ -821,12 +833,20 @@ class Node:
         elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
             return self.receive_vote_status_update(message_in)
 
-    def run(self):
-        # Main node run method called from main()
-        logging.info("Node {} started.".format(self.node_id))
+    def run(self, message: Union[Message, None] = None):
+        """
+        Main loop method.
+        :param message: Message object to be received by this node.
+        :return:
+        """
 
-        # Try generating the block if we are the appropriate node.
-        self.gen_commit()
+        # Process the message if we got one.
+        if message:
+            self.receive(message_in=message)
+
+        # Try generating the block if we are the appropriate node for it.
+        if not self.active_candidate:
+            self.gen_commit()
 
 
 def main():
@@ -847,16 +867,33 @@ def main():
         )
     logging.info("Nodes generated.")
 
-    # Run node that generates the first block.
-    nodes[nodes[0].get_next_block_master_id()].run()
-
-    # Main message exchange loop.
+    # Main loop.
     nodes_with_required_number_of_blocks = 0
-    next_message = transport.receive()
-    while next_message:
-        message, to_node_id = next_message
-        nodes[to_node_id].receive(message)
-        next_message = transport.receive()
+    cycles = 0
+    while True:
+        cycles += 1
+
+        # IDs of all the nodes that need to be ran.
+        nodes_to_run = {i for i in range(NODE_COUNT)}
+
+        # Get possible message.
+        messages_to_deliver = transport.receive()
+
+        # Deliver the messages.
+        for message, to_node_id in messages_to_deliver:
+
+            # Run the node and deliver it's message.
+            nodes[to_node_id].run(message)
+
+            # Remove ID of the nodes that have been ran.
+            try:
+                nodes_to_run.remove(to_node_id)
+            except KeyError:
+                pass
+
+        # Run the rest of the nodes that did not get a message.
+        for i in nodes_to_run:
+            nodes[i].run()
 
         # Exit the main loop if GENERATE_BLOCKS was forged on the majority of the nodes.
         nodes_with_required_number_of_blocks = 0
@@ -867,8 +904,9 @@ def main():
             logging.info("--- All the blocks we requested were forged, stopping gracefully. ---")
             break
 
-    if nodes_with_required_number_of_blocks <= NODE_COUNT/2.0:
-        logging.error("--- Premature termination. We ran out of messages. ---")
+        if cycles > MAX_LOOP_ITERATIONS:
+            logging.error("--- Premature termination. We ran out of allowed cycles by MAX_LOOP_ITERATIONS. ---")
+            break
 
     # Gather stats on generated blocks.
     blocks_generated = {}
@@ -885,6 +923,7 @@ def main():
     if not blocks_generated:
         logging.error("No blocks were generated.")
 
+    logging.info("{} cycles were executed.".format(cycles))
     logging.info("THE END")
 
 
