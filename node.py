@@ -467,9 +467,12 @@ class Node:
             self.active_candidate = self.candidates[message_in.block.block_id]
             # Since we just got a new block and verified it to be good, we broadcast an approval for it.
             self.send_approve_once()
-        else:
-            # Set current active candidate.
+        elif self.candidates and sorted(self.candidates.keys(), reverse=True)[0] == message_in.block.block_id:
+            # Set current active candidate to the last block.
             self.active_candidate = self.candidates[message_in.block.block_id]
+        else:
+            # Drop the message processing if we received a message on an old block.
+            return False
 
         # COMMIT
         if message_in.message_type == Message.TYPE_COMMIT:
