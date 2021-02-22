@@ -12,6 +12,7 @@ class Message:
     TYPE_VOTE = "vote"
     TYPE_APPROVE_STATUS_UPDATE = "approve_status_update"
     TYPE_VOTE_STATUS_UPDATE = "vote_status_update"
+    TYPE_UPDATE_REQUEST = "update_request"  # TODO: Implement this message type.
 
     node_id: int
     message_type: str

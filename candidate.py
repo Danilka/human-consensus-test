@@ -1,5 +1,4 @@
 from collections import Set
-
 from block import Block
 
 
@@ -17,9 +16,6 @@ class Candidate:
         ACTION_VOTE,
         ACTION_VOTE_STATUS_UPDATE,
     )
-
-    # Shadow argument. Points to the self.block.block_id
-    block_id: int
 
     # Candidate block.
     block: Block
@@ -75,9 +71,17 @@ class Candidate:
             ))
         return action in self.actions_taken
 
-    def __getattr__(self, item):
-        """Proxies block_id from the block.block_id."""
-        if item == 'block_id':
-            return self.block.block_id
-        else:
-            return self.__getattribute__(item)
+    def __eq__(self, other) -> bool:
+        """Is another object equal to self?"""
+        if not isinstance(other, self.__class__):
+            return NotImplemented
+        return self.block == other.block\
+            and self.messages_approve == other.messages_approve\
+            and self.messages_vote == other.messages_vote\
+            and self.vote_status_updates == other.vote_status_updates\
+            and self.actions_taken == other.actions_taken\
+            and self.forged == other.forged
+
+    def __ne__(self, other) -> bool:
+        """Is another object not equal to self?"""
+        return not self.__eq__(other)

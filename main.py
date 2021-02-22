@@ -1,12 +1,11 @@
 from __future__ import annotations
 from typing import List
 import logging
-
-
-# Choose between logging.INFO, logging.ERROR, logging.DEBUG
 from node import Node
 from transport import Transport
 
+
+# Choose between logging.INFO, logging.ERROR, logging.DEBUG
 LOGGING_LEVEL = logging.DEBUG
 
 # Should nodes store extra profs and votes.
@@ -30,6 +29,9 @@ LOST_MESSAGES_PERCENTAGE = 0.0
 # Distance between nodes gets multiplied by this factor and converted to seconds.
 DELAY_MULTIPLIER = 0.000001
 
+# How much time should pass before a blank block would be voted for.
+BLANK_BLOCK_TIMEOUT = 2.0    # In seconds.
+
 
 def main():
     # Setup logging.
@@ -52,6 +54,7 @@ def main():
             transport=transport,
             chain=[],
             keep_excessive_messages=KEEP_EXCESSIVE_MESSAGES,
+            blank_block_timeout=BLANK_BLOCK_TIMEOUT,
         )
     logging.info("Nodes generated.")
 
