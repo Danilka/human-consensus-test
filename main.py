@@ -15,10 +15,10 @@ KEEP_EXCESSIVE_MESSAGES = False
 MAX_LOOP_ITERATIONS = 10**7
 
 # Maximum X, Y distance.
-MAX_DISTANCE = 10.0
+MAX_DISTANCE = 100.0
 
 # Number of nodes.
-NODE_COUNT = 16
+NODE_COUNT = 15
 
 # Number of blocks to generate.
 GENERATE_BLOCKS = 10
@@ -27,10 +27,10 @@ GENERATE_BLOCKS = 10
 LOST_MESSAGES_PERCENTAGE = 0.0
 
 # Distance between nodes gets multiplied by this factor and converted to seconds.
-DELAY_MULTIPLIER = 0.000001
+DELAY_MULTIPLIER = 0.01
 
 # How much time should pass before a blank block would be voted for.
-BLANK_BLOCK_TIMEOUT = 2.0    # In seconds.
+BLANK_BLOCK_TIMEOUT = 0.2    # In seconds.
 
 
 def main():
@@ -115,6 +115,9 @@ def main():
         logging.error("No blocks were generated.")
 
     logging.info("{} cycles were executed.".format(cycles))
+    logging.info("First node chain:")
+    for block in nodes[0].chain:
+        logging.info(block)
     logging.info("THE END")
 
 

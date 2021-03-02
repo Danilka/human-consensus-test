@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 from typing import List, Union
 from block import Block
-from candidate import Candidate
+from candidate import Candidate, CandidateManager
 from message import Message
 from transport import Transport
 
@@ -69,7 +69,7 @@ class Node:
         self.chain = chain if chain else []
 
         self.node_id = node_id
-        self.candidates = defaultdict(list)
+        self.candidates = defaultdict(CandidateManager)
         self.active_candidate = None
         self.transport = transport
 
@@ -112,7 +112,7 @@ class Node:
 
         # Try voting for a blank block if there are no candidates.
         if not self.active_candidate:
-            self.try_voting_blank_block()
+            self.try_approving_blank_block()
 
     def receive(self, message_in: Message) -> bool:
         """Receive a message from another node."""
@@ -138,8 +138,35 @@ class Node:
             )
             return False
 
-        # Save new block as a candidate if we do not already have it.
-        if message_in.block.block_id not in self.candidates:
+        # Try finding passed block in the existing candidates.
+        if message_in.block.block_id in self.candidates\
+            and self.candidates[message_in.block.block_id].find(message_in.block) is not None:
+            try:
+                # Check if the block is next to be processed.
+                next_block_if = self.get_next_block_id()
+                if next_block_if == message_in.block.block_id:
+                    self.set_active_candidate(message_in.block)
+                else:
+                    # Means that the block is from the future.
+                    # We've already checked if this block was in the chain before.
+                    # TODO Ask the requester node to update our chain to message_in.block.block_id
+                    # For now we just delay this message.
+                    self.delay_message(message_in)
+                    return False
+            except self.NodeValueError as e:
+                # This should not happen.
+                logging.error(
+                    "N{} received a message {} and tried to set active candidate from it, but it didn't work."
+                    " Error message: {}".format(
+                        self.node_id,
+                        message_in,
+                        e,
+                    )
+                )
+                # This is critical, so we stop the program for now.
+                # TODO: Remove the raise.
+                raise e
+        else:
             # Create a candidate out of this block.
             if self.add_candidate(Candidate(block=message_in.block)):
                 # Since we just got a new block and verified it to be good, we broadcast an approval for it.
@@ -183,12 +210,9 @@ class Node:
         """Receive an approve message."""
 
         # If we already sent approve status update, we do not need extra approves.
-        approve_status_update_sent = False
-        for candidate in self.candidates[self.active_candidate.block.block_id]:
-            if candidate.check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE):
-                approve_status_update_sent = True
-
-        if not self.keep_excessive_messages and approve_status_update_sent:
+        if not self.keep_excessive_messages and self.candidates[self.active_candidate.block.block_id].check_action(
+            Candidate.ACTION_APPROVE_STATUS_UPDATE
+        ):
             return False
 
         if message_in.node_id in self.active_candidate.messages_approve:
@@ -416,7 +440,7 @@ class Node:
         # Pull and return the message.
         return self.messages_buffer.pop()
 
-    def try_voting_blank_block(self) -> bool:
+    def try_approving_blank_block(self) -> bool:
         """
         Try to nominate a blank block as the next block in the chain if no candidate was received.
         :return: True - Blank block ws nominated. False - there is no need to nominate blank block.
@@ -449,9 +473,8 @@ class Node:
         """Send approval message to everyone once."""
 
         # Check if we sent an approve for any candidate.
-        for candidate in self.candidates[self.active_candidate.block.block_id]:
-            if candidate.check_action(Candidate.ACTION_APPROVE):
-                return False
+        if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_APPROVE):
+            return False
 
         # Save the action we are taking.
         self.active_candidate.actions_taken.add(Candidate.ACTION_APPROVE)
@@ -475,9 +498,8 @@ class Node:
         """
 
         # Check if we sent an approve status update for any candidate.
-        for candidate in self.candidates[self.active_candidate.block.block_id]:
-            if candidate.check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE):
-                return False
+        if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE):
+            return False
 
         if not self.enough_approves():
             return False
@@ -504,9 +526,8 @@ class Node:
         """Send vote message to everyone once."""
 
         # Check if we sent a vote for any candidate.
-        for candidate in self.candidates[self.active_candidate.block.block_id]:
-            if candidate.check_action(Candidate.ACTION_VOTE):
-                return False
+        if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_VOTE):
+            return False
 
         # Check if we have enough approve status updates, we send a status update.
         if not self.enough_approve_status_updates():
@@ -539,9 +560,8 @@ class Node:
         """
 
         # Check if we sent a vote status update for any candidate.
-        for candidate in self.candidates[self.active_candidate.block.block_id]:
-            if candidate.check_action(Candidate.ACTION_VOTE_STATUS_UPDATE):
-                return False
+        if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_VOTE_STATUS_UPDATE):
+            return False
 
         if not self.enough_votes():
             return False
@@ -649,9 +669,35 @@ class Node:
 
         return True
 
-    def set_active_candidate(self):
-        """Sets self.active_candidate to the current candidate."""
-        self.active_candidate = self.get_candidate()
+    def set_active_candidate(self, block=None):
+        """
+        Sets self.active_candidate to the current candidate or a passed block.
+        :param block: Instance of a Block or None
+        :raises: NodeValueError if the candidate was not set.
+        :return:
+        """
+        if block is None:
+            # If the block was not passed we set active candidate automatically.
+            self.active_candidate = self.get_candidate()
+            return
+
+        # Check if this block is in candidates.
+        if block.block_id not in self.candidates:   # or len(self.candidates[block.block_id]) == 0: <- Would prevent the last raise.
+            raise self.NodeValueError("Passed block is not found in node's self.candidates dictionary.")
+
+        # Check if this block is next in line.
+        if self.get_next_block_id() != block.block_id:
+            raise self.NodeValueError("Passed block is not the next block to be processed.")
+
+        # Check if the same block is in candidates.
+        for i in range(len(self.candidates[block.block_id])):
+            if self.candidates[block.block_id][i].block == block:
+                # Matching candidate is found, set the candidate and exit.
+                self.active_candidate = self.candidates[block.block_id][i]
+                return
+
+        # This means that the previous loop did not find a matching block.
+        raise self.NodeValueError("Passed block is not found in node's self.candidates dictionary.")
 
     def get_candidate(self) -> Candidate:
         """
@@ -761,7 +807,7 @@ class Node:
         :return: True - block is valid. False - block is invalid.
         """
         # TODO Add block hash verification here.
-        if block.block_id % len(self.nodes) == block.node_id and block.block_id >= 0 or block.block_id is None:
+        if block.node_id is None or (block.block_id % len(self.nodes) == block.node_id and block.block_id >= 0):
             return True
         return False
 

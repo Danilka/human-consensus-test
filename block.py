@@ -42,7 +42,10 @@ class Block:
         """Is another object equal to self?"""
         if not isinstance(other, self.__class__):
             return NotImplemented
-        return self.block_id == other.block_id and self.node_id == other.node_id and self.body == other.body
+
+        # TODO: We should probably match hash and bodies.
+        #  However this doesn't work for blank blocks that have different bodies, but still need to match at the moment.
+        return self.block_id == other.block_id and self.node_id == other.node_id
 
     def __ne__(self, other) -> bool:
         """Is another object not equal to self?"""
@@ -50,7 +53,8 @@ class Block:
 
     def __str__(self) -> str:
         """Represent instance of the class as a string."""
-        return "B{}byN{}".format(
+        return "B{}byN{}{}".format(
             self.block_id,
-            self.node_id if self.node_id else "_",
+            self.node_id if self.node_id is not None else "_",
+            ": {}".format(self.body) if self.body else "",
         )
