@@ -182,8 +182,13 @@ class Node:
     def receive_approve(self, message_in: Message) -> bool:
         """Receive an approve message."""
 
-        # If we already voted, we do not need extra approves.
-        if not self.keep_excessive_messages and self.active_candidate.check_action(Candidate.ACTION_VOTE):
+        # If we already sent approve status update, we do not need extra approves.
+        approve_status_update_sent = False
+        for candidate in self.candidates[self.active_candidate.block.block_id]:
+            if candidate.check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE):
+                approve_status_update_sent = True
+
+        if not self.keep_excessive_messages and approve_status_update_sent:
             return False
 
         if message_in.node_id in self.active_candidate.messages_approve:
@@ -202,13 +207,11 @@ class Node:
         # Send approve status update if we need to.
         self.send_approve_status_update_once()
 
-        # We have enough approves, now we also send out our vote.
-        self.send_vote_once()
-
         return True
 
     def receive_approve_status_update(self, message_in: Message) -> bool:
         """Receive an approve status update message."""
+
         # Verify message chain.
         for _, message_in_chain in message_in.messages_chain.items():
             if not self.verify_block(message_in_chain.block):
@@ -247,6 +250,9 @@ class Node:
         # Update our messages_approve with the new info from the message.
         if not self.active_candidate.check_action(Candidate.ACTION_VOTE) or self.keep_excessive_messages:
             self.active_candidate.messages_approve.update(message_in.messages_chain)
+
+        # Increment the approve_status_update counter with the info we got.
+        self.active_candidate.approve_status_updates.add(message_in.node_id)
 
         # Save the whole approve message chain for that node.
         # TODO: Comment this out as the other node's approval chain could still fill up and be updated.
@@ -439,35 +445,13 @@ class Node:
 
         return True
 
-    def send_approve_status_update_once(self) -> bool:
-        """
-        Send approve status update once if we have enough approves.
-        :return: True - update was sent. False - update was not sent.
-        """
-        if self.active_candidate.check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE):
-            return False
-
-        if not self.enough_approves():
-            return False
-
-        self.active_candidate.take_action(Candidate.ACTION_APPROVE_STATUS_UPDATE)
-
-        message_out = Message(
-            node_id=self.node_id,
-            block=self.active_candidate.block,
-            message_type=Message.TYPE_APPROVE_STATUS_UPDATE,
-            # TODO: This should have a separate diff for each node with only messages
-            # that they need to reach approval.
-            messages_chain=self.active_candidate.messages_approve,
-        )
-        self.broadcast(message_out)
-
-        return True
-
     def send_approve_once(self):
         """Send approval message to everyone once."""
-        if Candidate.ACTION_APPROVE in self.active_candidate.actions_taken:
-            return False
+
+        # Check if we sent an approve for any candidate.
+        for candidate in self.candidates[self.active_candidate.block.block_id]:
+            if candidate.check_action(Candidate.ACTION_APPROVE):
+                return False
 
         # Save the action we are taking.
         self.active_candidate.actions_taken.add(Candidate.ACTION_APPROVE)
@@ -484,13 +468,48 @@ class Node:
         self.broadcast(message_out)
         return True
 
-    def send_vote_once(self):
-        """Send vote message to everyone once."""
-        if self.active_candidate.check_action(Candidate.ACTION_VOTE):
+    def send_approve_status_update_once(self) -> bool:
+        """
+        Send approve status update once if we have enough approves.
+        :return: True - update was sent. False - update was not sent.
+        """
+
+        # Check if we sent an approve status update for any candidate.
+        for candidate in self.candidates[self.active_candidate.block.block_id]:
+            if candidate.check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE):
+                return False
+
+        if not self.enough_approves():
             return False
 
-        # Check if we have enough approve votes, we send a status update.
-        if not self.enough_approves():
+        # Set a flag that we have sent this update out.
+        self.active_candidate.take_action(Candidate.ACTION_APPROVE_STATUS_UPDATE)
+
+        # Increment the vote_status update counter with our own info.
+        self.active_candidate.approve_status_updates.add(self.node_id)
+
+        message_out = Message(
+            node_id=self.node_id,
+            block=self.active_candidate.block,
+            message_type=Message.TYPE_APPROVE_STATUS_UPDATE,
+            # TODO: This should have a separate diff for each node with only messages
+            # that they need to reach approval.
+            messages_chain=self.active_candidate.messages_approve,
+        )
+        self.broadcast(message_out)
+
+        return True
+
+    def send_vote_once(self):
+        """Send vote message to everyone once."""
+
+        # Check if we sent a vote for any candidate.
+        for candidate in self.candidates[self.active_candidate.block.block_id]:
+            if candidate.check_action(Candidate.ACTION_VOTE):
+                return False
+
+        # Check if we have enough approve status updates, we send a status update.
+        if not self.enough_approve_status_updates():
             return False
 
         # Save the action we are taking.
@@ -519,8 +538,10 @@ class Node:
         :return: True - update was sent. False - update was not sent.
         """
 
-        if self.active_candidate.check_action(Candidate.ACTION_VOTE_STATUS_UPDATE):
-            return False
+        # Check if we sent a vote status update for any candidate.
+        for candidate in self.candidates[self.active_candidate.block.block_id]:
+            if candidate.check_action(Candidate.ACTION_VOTE_STATUS_UPDATE):
+                return False
 
         if not self.enough_votes():
             return False
@@ -581,6 +602,13 @@ class Node:
         # self.gen_commit()
 
         return True
+
+    def enough_approve_status_updates(self) -> bool:
+        """
+        Check if we have enough approve status updates in the current candidate to vote for it.
+        :return: True - enough approve status updates, False, not enough approve status updates.
+        """
+        return len(self.active_candidate.approve_status_updates) > len(self.nodes) / 2.0
 
     def enough_vote_status_updates(self) -> bool:
         """

@@ -23,6 +23,9 @@ class Candidate:
     # Incoming approve messages.
     messages_approve: dict
 
+    # Set of node_ids that we received vote status updates from.
+    approve_status_updates: Set[int]
+
     # Incoming vote messages.
     messages_vote: dict
 
@@ -43,6 +46,7 @@ class Candidate:
         #   node_id: [list of node_ids that approved this vote]
         # }
         self.vote_status_updates = set()
+        self.approve_status_updates = set()
         self.actions_taken = set()
         self.forged = False
 
@@ -78,6 +82,7 @@ class Candidate:
         return self.block == other.block\
             and self.messages_approve == other.messages_approve\
             and self.messages_vote == other.messages_vote\
+            and self.approve_status_updates == other.approve_status_updates\
             and self.vote_status_updates == other.vote_status_updates\
             and self.actions_taken == other.actions_taken\
             and self.forged == other.forged
