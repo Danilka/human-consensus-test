@@ -201,6 +201,37 @@ class Node:
         elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
             return self.receive_vote_status_update(message_in)
 
+        # TYPE_CHAIN_UPDATE_REQUEST
+        # TODO
+        elif message_in.message_type == Message.TYPE_CHAIN_UPDATE_REQUEST:
+            raise NotImplemented
+
+        # TYPE_CHAIN_UPDATE
+        # TODO
+        elif message_in.message_type == Message.TYPE_CHAIN_UPDATE:
+            raise NotImplemented
+
+    # TODO Actually call this method somewhere.
+    def request_chain_update(self, node_ids: Union[None, List[int]] = None):
+        # Get the last block in the chain.
+        try:
+            last_block = self.get_last_block()
+        except self.NodeValueError:
+            last_block = None
+
+        # Prepare the request message.
+        message = Message(
+            Message.TYPE_CHAIN_UPDATE_REQUEST,
+            block=last_block,   # Signifies the last block we have.
+        )
+
+        # Send or broadcast the message.
+        if not node_ids:
+            self.broadcast(message)
+        else:
+            for node_id in node_ids:
+                self.send_message(message, node_id)
+
     def receive_commit(self, message_in: Message) -> bool:
         """Receive a commit message."""
         # This logic is already handled by block validation in self.receive()
@@ -379,7 +410,22 @@ class Node:
         self.broadcast(message)
         return True
 
+    def get_last_block(self) -> Block:
+        """
+        Get the last forged block in self.chain.
+        :return: Block instance of the last block.
+        :raises: Node.NodeValueError if self.chain is empty.
+        """
+        if not self.chain:
+            raise self.NodeValueError("Chain is empty. There is no last blocks.")
+
+        return self.chain[-1]
+
     def get_next_block_id(self) -> int:
+        """
+        Get the next block ID that has to be generated.
+        :return: Block ID
+        """
         if not self.chain:
             return 0
         return len(self.chain)
@@ -400,13 +446,16 @@ class Node:
             # Skipp sending messages excluded list.
             if i in exclude_node_ids:
                 continue
-            self.transport.send(message, to_id=i)
+            self.send_message(message, i)
+
+    def send_message(self, message: Message, node_id: int):
+        """ Send a message to a specific node. """
+        self.transport.send(message, to_id=node_id)
 
     def delay_message(self, message: Message):
         """
         Saves a message to be processed later.
         :param message: Instance of a Message.
-        :return:
         """
 
         # Save message into the buffer.

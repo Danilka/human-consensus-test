@@ -12,7 +12,8 @@ class Message:
     TYPE_VOTE = "vote"
     TYPE_APPROVE_STATUS_UPDATE = "approve_status_update"
     TYPE_VOTE_STATUS_UPDATE = "vote_status_update"
-    TYPE_UPDATE_REQUEST = "update_request"  # TODO: Implement this message type.
+    TYPE_CHAIN_UPDATE_REQUEST = "chain_update_request"
+    TYPE_CHAIN_UPDATE = "chain_update"
 
     node_id: int
     message_type: str
@@ -26,7 +27,13 @@ class Message:
         block: Union[None, Block] = None,
         messages_chain: Union[list, dict, None] = None,
     ):
-        """Constructor"""
+        """
+        Constructor
+        :param node_id: ID of the node sending the message.
+        :param message_type: One of the self.TYPE_***
+        :param block: block that is attached to the message.
+        :param messages_chain: Messages that prove the block.
+        """
         self.node_id = node_id
         self.message_type = message_type
         self.block = block
