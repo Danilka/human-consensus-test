@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Union
-
+from typing import Union, List, Dict
 from block import Block
+from candidate import CandidateManager
 
 
 class Message:
@@ -17,33 +17,46 @@ class Message:
 
     node_id: int
     message_type: str
-    block: Block
+    blocks: List[Block]
     messages_chain: Union[list, dict, None]
 
     def __init__(
         self,
         node_id: int,
         message_type: str,
-        block: Union[None, Block] = None,
+        blocks: List[Block] = (),
         messages_chain: Union[list, dict, None] = None,
+        candidates: Union[Dict[CandidateManager], None] = None,
     ):
         """
         Constructor
         :param node_id: ID of the node sending the message.
         :param message_type: One of the self.TYPE_***
-        :param block: block that is attached to the message.
+        :param blocks: List of blocks that are attached to the message.
         :param messages_chain: Messages that prove the block.
+        :param candidates: dict of {block_id : CandidateManager(list)}
         """
         self.node_id = node_id
         self.message_type = message_type
-        self.block = block
+        self.blocks = blocks
         self.messages_chain = messages_chain
+        self.candidates = candidates
 
     def __eq__(self, other) -> bool:
         """Is another object is equal to self?"""
         if not isinstance(other, self.__class__):
             raise Exception("Cannot compare objects Message and {}".format(type(other)))
-        if (self.node_id, self.message_type, self.block) != (other.node_id, other.message_type, other.block):
+        if (
+                self.node_id,
+                self.message_type,
+                self.blocks,
+                self.candidates
+        ) != (
+                other.node_id,
+                other.message_type,
+                other.blocks,
+                self.candidates
+        ):
             return False
         if not self.messages_chain and not other.messages_chain:
             return True
@@ -60,8 +73,19 @@ class Message:
 
     def __str__(self) -> str:
         """Represent instance of the class as a string."""
-        return "[{message_type}] B{block_id} messages_chain size = {messages_chain_size}".format(
+        return "[{message_type}] B{blocks} messages_chain size = {messages_chain_size}".format(
             message_type=self.message_type,
-            block_id=self.block.block_id if self.block else "-",
+            blocks=self.blocks[0].block_id if self.blocks else self.blocks,
             messages_chain_size=len(self.messages_chain) if self.messages_chain else 0,
         )
+
+    # TODO Remove in the future revisions.
+    def __setattr__(self, key, value):
+        if key == 'block':
+            raise KeyError('Message.block was deprecated, please use Message.block[0] instead.')
+        return super(Message, self).__setattr__(key, value)
+
+    def __getattr__(self, item):
+        if item == 'block':
+            raise KeyError('Message.block was deprecated, please use Message.block[0] instead.')
+        return self.__getattribute__(item)

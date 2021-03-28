@@ -117,6 +117,13 @@ class Node:
     def receive(self, message_in: Message) -> bool:
         """Receive a message from another node."""
 
+        # TYPE_CHAIN_UPDATE_REQUEST - Does not require message validation.
+        if message_in.message_type == Message.TYPE_CHAIN_UPDATE_REQUEST:
+            return self.receive_chain_update_request(message_in)
+        # TYPE_CHAIN_UPDATE
+        elif message_in.message_type == Message.TYPE_CHAIN_UPDATE:
+            raise NotImplemented
+
         # Validate an incoming message.
         try:
             if not self.validate_message(message_in):
@@ -128,7 +135,7 @@ class Node:
             return False
 
         # Check if the block has already been forged.
-        if message_in.block in self.chain:
+        if message_in.blocks[0] in self.chain:
             # TODO: We should probably send the proof message to the requesting node, so it can forge the block as well.
             logging.debug(
                 "N{} received a message from N{} and discarded it because this block is already forged.".format(
@@ -139,13 +146,13 @@ class Node:
             return False
 
         # Try finding passed block in the existing candidates.
-        if message_in.block.block_id in self.candidates\
-            and self.candidates[message_in.block.block_id].find(message_in.block) is not None:
+        if message_in.blocks[0].block_id in self.candidates\
+            and self.candidates[message_in.blocks[0].block_id].find(message_in.blocks[0]) is not None:
             try:
                 # Check if the block is next to be processed.
                 next_block_if = self.get_next_block_id()
-                if next_block_if == message_in.block.block_id:
-                    self.set_active_candidate(message_in.block)
+                if next_block_if == message_in.blocks[0].block_id:
+                    self.set_active_candidate(message_in.blocks[0])
                 else:
                     # Means that the block is from the future.
                     # We've already checked if this block was in the chain before.
@@ -168,7 +175,7 @@ class Node:
                 raise e
         else:
             # Create a candidate out of this block.
-            if self.add_candidate(Candidate(block=message_in.block)):
+            if self.add_candidate(Candidate(block=message_in.blocks[0])):
                 # Since we just got a new block and verified it to be good, we broadcast an approval for it.
                 self.send_approve_once()
             else:
@@ -200,16 +207,6 @@ class Node:
         # VOTE_STATUS_UPDATE
         elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
             return self.receive_vote_status_update(message_in)
-
-        # TYPE_CHAIN_UPDATE_REQUEST
-        # TODO
-        elif message_in.message_type == Message.TYPE_CHAIN_UPDATE_REQUEST:
-            raise NotImplemented
-
-        # TYPE_CHAIN_UPDATE
-        # TODO
-        elif message_in.message_type == Message.TYPE_CHAIN_UPDATE:
-            raise NotImplemented
 
     # TODO Actually call this method somewhere.
     def request_chain_update(self, node_ids: Union[None, List[int]] = None):
@@ -269,7 +266,7 @@ class Node:
 
         # Verify message chain.
         for _, message_in_chain in message_in.messages_chain.items():
-            if not self.verify_block(message_in_chain.block):
+            if not self.verify_block(message_in_chain.blocks[0]):
                 # Got a message with a wrong block.
                 logging.error("N{} received an approve status update from N{} with a wrong block".format(
                     self.node_id,
@@ -287,7 +284,7 @@ class Node:
             )
             return False
 
-        if self.active_candidate and self.active_candidate.block != message_in.block:
+        if self.active_candidate and self.active_candidate.block != message_in.blocks[0]:
             # This means that my block is different from the one that is being approved.
             # TODO: We need to find the difference and update our chain up to this block.
             logging.error(
@@ -295,7 +292,7 @@ class Node:
                 "that differs from my candidate ({}).".format(
                     self.node_id,
                     message_in.node_id,
-                    message_in.block,
+                    message_in.blocks[0],
                     self.active_candidate.block,
                 ))
             return False
@@ -383,6 +380,85 @@ class Node:
 
         return True
 
+    def receive_chain_update_request(self, message_in: Message) -> bool:
+        """Receive a chain update request."""
+
+        # Blocks that need to be included into the message.
+        # Note that indexes in this list are not block IDs!
+        blocks = []
+        if not message_in.blocks:
+            # The whole chain should be sent.
+            blocks = self.chain
+        elif message_in.blocks[0].block_id < len(self.chain)-1:
+            # Pick a diff between received block and the last block we have.
+            for i in range(message_in.blocks[0].block_id+1, len(self.chain)):
+                blocks.append(self.chain[i])
+
+        # Message
+        next_block_id = self.get_next_block_id()
+        message_out = Message(
+            node_id=self.node_id,
+            message_type=Message.TYPE_CHAIN_UPDATE,
+            blocks=blocks,
+            candidates={
+                next_block_id: self.candidates[next_block_id]
+            } if next_block_id in self.candidates else None,
+        )
+
+        # Send
+        self.send_message(message_out, message_in.node_id)
+        return True
+
+    def receive_chain_update(self, message_in: Message) -> bool:
+        """Receive a chain update."""
+
+        # Update chain.
+        if message_in.blocks:
+
+            # Create searchable index.
+            block_index = {}
+            for block in message_in.blocks:
+                block_index[block.block_id] = block
+
+            # Iterate and update self.chain for only the blocks we need.
+            next_block_id = self.get_next_block_id()
+            while next_block_id in block_index:
+                if self.verify_block(block_index[next_block_id]):
+                    self.chain[block_index[next_block_id]] = block_index[next_block_id]
+                else:
+                    logging.warning(
+                        "N{} received a chain update from N{}"
+                        " and block {} is not valid. The block was discarded".format(
+                            self.node_id,
+                            message_in.node_id,
+                            block_index[next_block_id]
+                        )
+                    )
+                del block_index[next_block_id]
+                next_block_id = self.get_next_block_id()
+
+        # Update candidates.
+        if message_in.candidates:
+            candidate_id = self.get_next_block_id()  # To make sure we are getting the right candidate.
+            if candidate_id not in message_in.candidates:
+                # This is either because the update is from a node that is behind, or something is wrong.
+                logging.warning(
+                    "N{} received a chain update from N{}"
+                    " and the candidate in the message is not for the next block in line.".format(
+                        self.node_id,
+                        message_in.node_id,
+                    )
+                )
+                # nothing else to do at this point.
+                return False
+
+            for candidate in message_in.candidates[candidate_id]:
+                # TODO Finish this.
+                pass
+
+
+        return True
+
     def gen_commit(self) -> bool:
         if self.node_id != self.get_next_block_node_id():
             # logging.error("Node #{} tried to generate a commit, while it should have been generated by {}".format(
@@ -462,7 +538,7 @@ class Node:
         self.messages_buffer.append(message)
 
         # Sort the buffer.
-        self.messages_buffer = sorted(self.messages_buffer, key=lambda x: x.block.block_id, reverse=True)
+        self.messages_buffer = sorted(self.messages_buffer, key=lambda x: x.blocks[0].block_id, reverse=True)
 
     def get_delayed_message(self) -> Message:
         """
@@ -477,12 +553,12 @@ class Node:
 
         # Make sure the node is ready to process this message.
         next_block_id = self.get_next_block_id()
-        if self.messages_buffer[-1].block.block_id > next_block_id:
+        if self.messages_buffer[-1].blocks[0].block_id > next_block_id:
             raise self.NodeValueError(
                 "The node is not ready to process next message in from self.messages_buffer.\n"
                 "Next block to be processed by this node is B{}. The message requires B{}".format(
                     next_block_id,
-                    self.messages_buffer[-1].block.block_id,
+                    self.messages_buffer[-1].blocks[0].block_id,
                 )
             )
 
@@ -827,7 +903,7 @@ class Node:
             return False
 
         # Check if the message has a block.
-        if not message.block:
+        if not message.blocks:
             logging.error(
                 "N{} received a message from N{} and discarded because there is no block attached.".format(
                     self.node_id,
@@ -836,15 +912,16 @@ class Node:
             )
             return False
 
-        # Verify sent block in the message.
-        if not self.verify_block(message.block):
-            logging.error(
-                "N{} received a message from N{} and discarded it because the block is invalid.".format(
-                    self.node_id,
-                    message.node_id
+        # Verify sent blocks in the message.
+        for block in message.blocks:
+            if not self.verify_block(block):
+                logging.error(
+                    "N{} received a message from N{} and discarded it because the block is invalid.".format(
+                        self.node_id,
+                        message.node_id
+                    )
                 )
-            )
-            return False
+                return False
 
         # TODO: Add real signature message validation here.
         return True
