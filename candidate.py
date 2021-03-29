@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import Set
 from block import Block
 
@@ -75,10 +76,19 @@ class Candidate:
             ))
         return action in self.actions_taken
 
-    def __eq__(self, other) -> bool:
+    def is_same_kind(self, other: Candidate):
+        """
+        Check if another Candidate is for the same kind of block.
+        :param other: Instance of a Candidate.
+        :return: True - it's the same candidate for the same block. False - not.
+        """
+        return self.block == other.block
+
+    def __eq__(self, other: Candidate) -> bool:
         """Is another object equal to self?"""
         if not isinstance(other, self.__class__):
             return NotImplemented
+
         return self.block == other.block\
             and self.messages_approve == other.messages_approve\
             and self.messages_vote == other.messages_vote\
@@ -87,9 +97,81 @@ class Candidate:
             and self.actions_taken == other.actions_taken\
             and self.forged == other.forged
 
-    def __ne__(self, other) -> bool:
+    def __ne__(self, other: Candidate) -> bool:
         """Is another object not equal to self?"""
         return not self.__eq__(other)
+
+    def __gt__(self, other: Candidate):
+        """
+        Is self further in approval process than other.
+        Note that this does not verify validity of the votes.
+        :param other: Instance of a Candidate to compare.
+        :return: True - self is greater. False - other is greater or equal.
+        :raises: ValueError - if the candidates are for different blocks. NotImplemented - if improper other is passed.
+        """
+        if not isinstance(other, self.__class__):
+            return NotImplemented
+
+        if not self.is_same_kind(other):
+            raise ValueError("Cannot compare Candidate with a different kind of block.")
+
+        if self.forged and not other.forged:
+            return True
+        elif other.forged and not self.forged:
+            return False
+
+        if len(self.vote_status_updates) > len(other.vote_status_updates):
+            return True
+        elif len(self.vote_status_updates) < len(other.vote_status_updates):
+            return False
+
+        if len(self.messages_vote) > len(other.messages_vote):
+            return True
+        elif len(self.messages_vote) < len(other.messages_vote):
+            return False
+
+        if len(self.approve_status_updates) > len(other.approve_status_updates):
+            return True
+        elif len(self.approve_status_updates) < len(other.approve_status_updates):
+            return False
+
+        if len(self.messages_approve) > len(other.messages_approve):
+            return True
+        elif len(self.messages_approve) < len(other.messages_approve):
+            return False
+
+        return False    # Candidates are equal
+
+    def __ge__(self, other):
+        """
+        Is self further or equal in approval process than other.
+        Note that this does not verify validity of the votes.
+        :param other: Instance of a Candidate to compare.
+        :return: True - self is greater or equal. False - other is greater.
+        :raises: ValueError - if the candidates are for different blocks. NotImplemented - if improper other is passed.
+        """
+        return self == other or self > other
+
+    def __lt__(self, other):
+        """
+        Is self earlier in approval process than other.
+        Note that this does not verify validity of the votes.
+        :param other: Instance of a Candidate to compare.
+        :return: True - other is greater. False - self is greater or equal.
+        :raises: ValueError - if the candidates are for different blocks. NotImplemented - if improper other is passed.
+        """
+        return not self == other and not self > other
+
+    def __le__(self, other):
+        """
+        Is self earlier or equal in approval process than other.
+        Note that this does not verify validity of the votes.
+        :param other: Instance of a Candidate to compare.
+        :return: True - self is less or equal. False - other is greater.
+        :raises: ValueError - if the candidates are for different blocks. NotImplemented - if improper other is passed.
+        """
+        return self == other or not self > other
+        pass
 
 
 class CandidateManager(list):
