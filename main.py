@@ -32,6 +32,9 @@ DELAY_MULTIPLIER = 0.01
 # How much time should pass before a blank block would be voted for.
 BLANK_BLOCK_TIMEOUT = 0.2    # In seconds.
 
+# Timeout for inactivity before a node requests chain update.
+CHAIN_UPDATE_TIMEOUT = 10.0    # In seconds.
+
 
 def main():
     # Setup logging.
@@ -55,6 +58,7 @@ def main():
             chain=[],
             keep_excessive_messages=KEEP_EXCESSIVE_MESSAGES,
             blank_block_timeout=BLANK_BLOCK_TIMEOUT,
+            chain_update_timeout=CHAIN_UPDATE_TIMEOUT,
         )
     logging.info("Nodes generated.")
 
@@ -118,7 +122,7 @@ def main():
     logging.info("First node chain:")
     for block in nodes[0].chain:
         logging.info(block)
-    logging.info("THE END")
+    print("THE END")
 
 
 if __name__ == "__main__":

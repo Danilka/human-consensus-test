@@ -173,6 +173,18 @@ class Candidate:
         return self == other or not self > other
         pass
 
+    def __str__(self):
+        return "C for {} As:{} ASUs:{} Vs:{} VSUs:{}".format(
+            self.block,
+            len(self.messages_approve),
+            len(self.approve_status_updates),
+            len(self.messages_vote),
+            len(self.vote_status_updates),
+        )
+
+    def __repr__(self):
+        return self.__str__()
+
 
 class CandidateManager(list):
 

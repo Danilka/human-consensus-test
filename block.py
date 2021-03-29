@@ -58,3 +58,6 @@ class Block:
             self.node_id if self.node_id is not None else "_",
             ": {}".format(self.body) if self.body else "",
         )
+
+    def __repr__(self):
+        return self.__str__()

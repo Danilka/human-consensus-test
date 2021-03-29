@@ -19,6 +19,7 @@ class Message:
     message_type: str
     blocks: List[Block]
     messages_chain: Union[list, dict, None]
+    candidates: Union[Dict[CandidateManager], None]
 
     def __init__(
         self,
@@ -38,7 +39,7 @@ class Message:
         """
         self.node_id = node_id
         self.message_type = message_type
-        self.blocks = blocks
+        self.blocks = [block for block in blocks if block is not None]
         self.messages_chain = messages_chain
         self.candidates = candidates
 

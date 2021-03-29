@@ -42,7 +42,9 @@ class Node:
     # Time control variables.
     time_forged: float
     time_approved: float
+    time_update_requested: float
     blank_block_timeout: float
+    chain_update_timeout: float
 
     def __init__(
         self,
@@ -52,6 +54,7 @@ class Node:
         chain: Union[List, None] = None,
         keep_excessive_messages: bool = False,
         blank_block_timeout: float = 2.0,
+        chain_update_timeout: float = 5.0,
     ):
         """
         Constructor
@@ -61,6 +64,7 @@ class Node:
         :param chain: Chain of forged blocks.
         :param keep_excessive_messages: Keep saving update messages inside self.candidates after a state has been proven.
         :param blank_block_timeout: Timeout before a blank block would be nominated as a next block.
+        :param chain_update_timeout: Timeout before the node requests a chain update from other nodes.
         """
 
         # Validate and set the chain.
@@ -80,12 +84,14 @@ class Node:
         # Messages related settings.
         self.keep_excessive_messages = keep_excessive_messages
         self.blank_block_timeout = blank_block_timeout
+        self.chain_update_timeout = chain_update_timeout
         self.messages_buffer = []
 
         # Start all timers at node's declaration.
         # We assume that there are either no blocks in the chain or the last one was forged and approved right now.
         self.time_forged = time.time()
         self.time_approved = time.time()
+        self.time_update_requested = time.time()
 
     def run(self, message: Union[Message, None] = None):
         """
@@ -114,6 +120,9 @@ class Node:
         if not self.active_candidate:
             self.try_approving_blank_block()
 
+        # Try requesting chain update.
+        self.try_requesting_chain_update()
+
     def receive(self, message_in: Message) -> bool:
         """Receive a message from another node."""
 
@@ -122,7 +131,7 @@ class Node:
             return self.receive_chain_update_request(message_in)
         # TYPE_CHAIN_UPDATE
         elif message_in.message_type == Message.TYPE_CHAIN_UPDATE:
-            raise NotImplemented
+            return self.receive_chain_update(message_in)
 
         # Validate an incoming message.
         try:
@@ -147,18 +156,22 @@ class Node:
 
         # Try finding passed block in the existing candidates.
         if message_in.blocks[0].block_id in self.candidates\
-            and self.candidates[message_in.blocks[0].block_id].find(message_in.blocks[0]) is not None:
+                and self.candidates[message_in.blocks[0].block_id].find(message_in.blocks[0]) is not None:
             try:
                 # Check if the block is next to be processed.
                 next_block_if = self.get_next_block_id()
                 if next_block_if == message_in.blocks[0].block_id:
                     self.set_active_candidate(message_in.blocks[0])
                 else:
-                    # Means that the block is from the future.
+                    # Means that the block is from the future, so we request a chain update from that block.
                     # We've already checked if this block was in the chain before.
-                    # TODO Ask the requester node to update our chain to message_in.block.block_id
-                    # For now we just delay this message.
-                    self.delay_message(message_in)
+                    self.request_chain_update(node_ids=[message_in.node_id])
+
+                    # We used to delay this message.
+                    # However, since the update is requested, we will get it as part of the update.
+                    # So we just discard the message.
+                    # self.delay_message(message_in)
+
                     return False
             except self.NodeValueError as e:
                 # This should not happen.
@@ -174,6 +187,12 @@ class Node:
                 # TODO: Remove the raise.
                 raise e
         else:
+            # Check if the block is from the future.
+            if self.get_next_block_id() < message_in.blocks[0].block_id:
+                # Request chain update from this node instead of processing this message.
+                self.request_chain_update(node_ids=[message_in.node_id])
+                return False
+
             # Create a candidate out of this block.
             if self.add_candidate(Candidate(block=message_in.blocks[0])):
                 # Since we just got a new block and verified it to be good, we broadcast an approval for it.
@@ -208,7 +227,6 @@ class Node:
         elif message_in.message_type == Message.TYPE_VOTE_STATUS_UPDATE:
             return self.receive_vote_status_update(message_in)
 
-    # TODO Actually call this method somewhere.
     def request_chain_update(self, node_ids: Union[None, List[int]] = None):
         # Get the last block in the chain.
         try:
@@ -218,8 +236,9 @@ class Node:
 
         # Prepare the request message.
         message = Message(
-            Message.TYPE_CHAIN_UPDATE_REQUEST,
-            block=last_block,   # Signifies the last block we have.
+            node_id=self.node_id,
+            message_type=Message.TYPE_CHAIN_UPDATE_REQUEST,
+            blocks=[last_block],   # Signifies the last block we have.
         )
 
         # Send or broadcast the message.
@@ -228,6 +247,9 @@ class Node:
         else:
             for node_id in node_ids:
                 self.send_message(message, node_id)
+
+        # Update the timer.
+        self.time_update_requested = time.time()
 
     def receive_commit(self, message_in: Message) -> bool:
         """Receive a commit message."""
@@ -424,7 +446,7 @@ class Node:
             next_block_id = self.get_next_block_id()
             while next_block_id in block_index:
                 if self.verify_block(block_index[next_block_id]):
-                    self.chain[block_index[next_block_id]] = block_index[next_block_id]
+                    self.chain[next_block_id] = block_index[next_block_id]
                 else:
                     logging.warning(
                         "N{} received a chain update from N{}"
@@ -452,10 +474,16 @@ class Node:
                 # nothing else to do at this point.
                 return False
 
+            candidate: Candidate
             for candidate in message_in.candidates[candidate_id]:
-                # TODO Finish this.
-                pass
-
+                local_candidate_id = self.candidates[candidate_id].find(candidate)
+                if local_candidate_id:
+                    # We have a local candidate for the same block. Pick the best.
+                    if self.candidates[candidate_id][local_candidate_id] < candidate:
+                        self.candidates[candidate_id][local_candidate_id] = candidate
+                else:
+                    # We did not have a local candidate for the same block. Save received one.
+                    self.candidates[candidate_id].append(candidate)
 
         return True
 
@@ -480,7 +508,7 @@ class Node:
         message = Message(
             node_id=self.node_id,
             message_type=Message.TYPE_COMMIT,
-            block=block,
+            blocks=[block],
         )
 
         self.broadcast(message)
@@ -572,9 +600,9 @@ class Node:
         """
 
         # We assume that the active candidate is the next valid block.
-        # It is only blank when there is no valid candidate.
+        # It is only blank when there are no valid candidates.
         if self.active_candidate:
-            return True
+            return False
 
         # Check if it is time to nominate a blank block.
         if self.time_forged + self.blank_block_timeout > time.time():
@@ -594,10 +622,28 @@ class Node:
 
         return True
 
+    def try_requesting_chain_update(self):
+        """
+        Try to request a chain update from other nodes if there is enough of standby time.
+        :return: True - update requested. False - it's not time yet.
+        """
+
+        # Check if it is time to request an update.
+        if self.last_activity_time() + self.chain_update_timeout > time.time():
+            return False
+
+        self.request_chain_update()
+
     def send_approve_once(self):
         """Send approval message to everyone once."""
 
         # Check if we sent an approve for any candidate.
+
+        # TODO Remove this comment once debugged
+        # if self.active_candidate is None:
+        #     print(self.candidates)
+        #     print(self.chain)
+        #     print(self.active_candidate)
         if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_APPROVE):
             return False
 
@@ -608,7 +654,7 @@ class Node:
         message_out = Message(
             node_id=self.node_id,
             message_type=Message.TYPE_APPROVE,
-            block=self.active_candidate.block,
+            blocks=[self.active_candidate.block],
         )
 
         # Save approve message into our own log as well.
@@ -637,7 +683,7 @@ class Node:
 
         message_out = Message(
             node_id=self.node_id,
-            block=self.active_candidate.block,
+            blocks=[self.active_candidate.block],
             message_type=Message.TYPE_APPROVE_STATUS_UPDATE,
             # TODO: This should have a separate diff for each node with only messages
             # that they need to reach approval.
@@ -667,7 +713,7 @@ class Node:
         # Prepare the message.
         message_out = Message(
             node_id=self.node_id,
-            block=self.active_candidate.block,
+            blocks=[self.active_candidate.block],
             message_type=Message.TYPE_VOTE,
             # TODO: This should have a separate diff for each node with only messages that they need to reach approval.
             # messages_chain={**self.messages_vote, **{self.node_id: self.messages_approve}}
@@ -694,7 +740,7 @@ class Node:
         # Prepare the message.
         message_out = Message(
             node_id=self.node_id,
-            block=self.active_candidate.block,
+            blocks=[self.active_candidate.block],
             message_type=Message.TYPE_VOTE_STATUS_UPDATE,
             # TODO: This should have a separate diff for each node with only messages
             # that they need to reach votes.
@@ -770,27 +816,14 @@ class Node:
         """
 
         # Check if there is a candidate with the same block already in there.
-        existing_candidate: Candidate
-        for existing_candidate in self.candidates[candidate.block.block_id]:
-            if existing_candidate.block == candidate.block:
-                if existing_candidate == existing_candidate:
-                    # if the same candidate is already there, it's ok.
-                    return False
-                else:
-                    # This is not ok when there is a different candidate with the same block.
-                    logging.error(
-                        "N{} is trying to add a candidate to self.candidates "
-                        "that already has another candidate with the same block. B{}".format(
-                            self.node_id,
-                            candidate.block.block_id,
-                        )
-                    )
-                    return False
+        if self.candidates[candidate.block.block_id].find(candidate.block) is not None:
+            self.set_active_candidate(block=candidate.block)
+            return False
 
         self.candidates[candidate.block.block_id].append(candidate)
 
         # Set new active_candidate after adding a new one in the mix.
-        self.set_active_candidate()
+        self.set_active_candidate(block=candidate.block)
 
         return True
 
@@ -972,6 +1005,20 @@ class Node:
 
         # If everything passed before, we assume that the chain is valid.
         return True
+
+    def last_activity_time(self):
+        """Get the time of last activity in the node."""
+        activity_times = [
+            self.time_forged,
+            self.time_approved,
+            self.time_update_requested,
+        ]
+        active_candidate = self.active_candidate
+        if active_candidate:
+            activity_times.append(active_candidate.block.created)
+
+        # Return the lates of all times.
+        return sorted(activity_times, reverse=True)[0]
 
     class NodeValueError(ValueError):
         """Custom value exception for Node class."""
