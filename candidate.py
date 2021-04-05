@@ -177,15 +177,16 @@ class Candidate:
     def __str__(self):
         r = "["
 
-        # Pick text color based on if the block is blank or not.
-        text_color = fg('black') if self.block.node_id is None else fg('white')
+        # Pick background color based on if the block is blank or not.
+        r += bg('grey_30') if self.block.node_id is None else bg('green')
 
         # Block ID
-        r += text_color
+        r += fg('white')
         r += str(self.block.block_id)
         r += attr('reset')
 
         # Approves
+        r += fg('black')
         approves = len(self.messages_approve)
         approve_sus = len(self.approve_status_updates)
         for i in range(max(approves, approve_sus)):
@@ -197,12 +198,14 @@ class Candidate:
                 r += " "
             elif i < approve_sus:
                 r += "|"
-            r += attr('reset')
+        r += attr('reset')
 
         # Votes
+        r += fg('black')
         votes = len(self.messages_vote)
         vote_sus = len(self.vote_status_updates)
         for i in range(max(votes, vote_sus)):
+            r += fg('black')
             if i < vote_sus and i < votes:
                 r += bg('deep_sky_blue_3b')
                 r += "|"
@@ -211,7 +214,7 @@ class Candidate:
                 r += " "
             elif i < vote_sus:
                 r += "|"
-            r += attr('reset')
+        r += attr('reset')
 
         r += "]"
         return r

@@ -1061,7 +1061,7 @@ class Node:
     def __str__(self):
         """Returns current node stage in a text format."""
 
-        return 'N{node_id} B:{chain}{next_candidates}'.format(
+        return 'N{node_id:02d} B:{chain}{next_candidates}'.format(
             node_id=self.node_id,
             chain=self.chain_str(),
             next_candidates=self.candidates_str(self.get_next_block_id()),

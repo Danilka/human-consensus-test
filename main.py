@@ -19,7 +19,7 @@ MAX_LOOP_ITERATIONS = 10**7
 MAX_DISTANCE = 100.0
 
 # Number of nodes.
-NODE_COUNT = 16
+NODE_COUNT = 8
 
 # Number of blocks to generate.
 GENERATE_BLOCKS = 16
