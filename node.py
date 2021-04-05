@@ -7,6 +7,7 @@ from block import Block
 from candidate import Candidate, CandidateManager
 from message import Message
 from transport import Transport
+from colored import fg, bg, attr
 
 
 class Node:
@@ -1019,6 +1020,52 @@ class Node:
 
         # Return the lates of all times.
         return sorted(activity_times, reverse=True)[0]
+
+    chain_annotation_str = "N7 <- Node number 7.\n" \
+        "B: <- This is followed by node's blocks.\n" \
+        "{bg_forged}{fg}[3]{reset} <- Forged block number 3\n" \
+        "{bg_blank}{fg}[4]{reset} <- forged blank block number 4" \
+        "".format(
+            bg_forged=bg('green'),
+            bg_blank=bg('grey_30'),
+            fg=fg('white'),
+            reset=attr('reset'),
+        )
+
+    def chain_str(self):
+        """Get printable string representing node's current chain."""
+        r = attr('reset')
+        for block in self.chain:
+            r += "{bg}{fg}[{block_id}]".format(
+                bg=bg('green') if block.node_id is not None else bg('grey_30'),
+                fg=fg('white'),
+                block_id=block.block_id,
+            )
+        r += attr('reset')
+        return r
+
+    def candidates_str(self, starting_id: int = 0):
+        """
+        Get printable string representing node's current candidates.
+        :param starting_id: Output should start from candidate #. Default=0.
+        :return: Printable string representing current chain's candidates.
+        """
+        if starting_id not in self.candidates:
+            return ""
+
+        r = ""
+        for i in range(starting_id, max(self.candidates.keys())+1):
+            r += str(self.candidates[i])     # Getting current candidates
+        return r
+
+    def __str__(self):
+        """Returns current node stage in a text format."""
+
+        return 'N{node_id} B:{chain}{next_candidates}'.format(
+            node_id=self.node_id,
+            chain=self.chain_str(),
+            next_candidates=self.candidates_str(self.get_next_block_id()),
+        )
 
     class NodeValueError(ValueError):
         """Custom value exception for Node class."""

@@ -3,10 +3,11 @@ from typing import List
 import logging
 from node import Node
 from transport import Transport
+from reprint import output
 
 
 # Choose between logging.INFO, logging.ERROR, logging.DEBUG
-LOGGING_LEVEL = logging.DEBUG
+LOGGING_LEVEL = logging.ERROR
 
 # Should nodes store extra profs and votes.
 KEEP_EXCESSIVE_MESSAGES = False
@@ -18,10 +19,10 @@ MAX_LOOP_ITERATIONS = 10**7
 MAX_DISTANCE = 100.0
 
 # Number of nodes.
-NODE_COUNT = 15
+NODE_COUNT = 16
 
 # Number of blocks to generate.
-GENERATE_BLOCKS = 10
+GENERATE_BLOCKS = 16
 
 # Lost Message % [0, 100) on send
 LOST_MESSAGES_PERCENTAGE = 0.0
@@ -30,10 +31,10 @@ LOST_MESSAGES_PERCENTAGE = 0.0
 DELAY_MULTIPLIER = 0.01
 
 # How much time should pass before a blank block would be voted for.
-BLANK_BLOCK_TIMEOUT = 0.2    # In seconds.
+BLANK_BLOCK_TIMEOUT = 0.25    # In seconds.
 
 # Timeout for inactivity before a node requests chain update.
-CHAIN_UPDATE_TIMEOUT = 10.0    # In seconds.
+CHAIN_UPDATE_TIMEOUT = 1000.0    # In seconds.
 
 
 def main():
@@ -60,48 +61,53 @@ def main():
             blank_block_timeout=BLANK_BLOCK_TIMEOUT,
             chain_update_timeout=CHAIN_UPDATE_TIMEOUT,
         )
-    logging.info("Nodes generated.")
 
     # Main loop.
+    nodes_print = []
     nodes_with_required_number_of_blocks = 0
     cycles = 0
-    while True:
-        cycles += 1
+    with output(output_type="list", initial_len=NODE_COUNT, interval=10) as nodes_print:
+        while True:
+            cycles += 1
 
-        # IDs of all the nodes that need to be ran.
-        nodes_to_run = {i for i in range(NODE_COUNT)}
+            # Print current status.
+            for i in range(len(nodes)):
+                nodes_print[i] = str(nodes[i])
 
-        # Get possible message.
-        messages_to_deliver = transport.receive()
+            # IDs of all the nodes that need to be ran.
+            nodes_to_run = {i for i in range(NODE_COUNT)}
 
-        # Deliver the messages.
-        for message, to_node_id in messages_to_deliver:
+            # Get possible message.
+            messages_to_deliver = transport.receive()
 
-            # Run the node and deliver it's message.
-            nodes[to_node_id].run(message)
+            # Deliver the messages.
+            for message, to_node_id in messages_to_deliver:
 
-            # Remove ID of the nodes that have been ran.
-            try:
-                nodes_to_run.remove(to_node_id)
-            except KeyError:
-                pass
+                # Run the node and deliver it's message.
+                nodes[to_node_id].run(message)
 
-        # Run the rest of the nodes that did not get a message.
-        for i in nodes_to_run:
-            nodes[i].run()
+                # Remove ID of the nodes that have been ran.
+                try:
+                    nodes_to_run.remove(to_node_id)
+                except KeyError:
+                    pass
 
-        # Exit the main loop if GENERATE_BLOCKS was forged on the majority of the nodes.
-        nodes_with_required_number_of_blocks = 0
-        for i in range(NODE_COUNT):
-            if len(nodes[i].chain) >= GENERATE_BLOCKS:
-                nodes_with_required_number_of_blocks += 1
-        if nodes_with_required_number_of_blocks > NODE_COUNT/2.0:
-            logging.info("--- All the blocks we requested were forged, stopping gracefully. ---")
-            break
+            # Run the rest of the nodes that did not get a message.
+            for i in nodes_to_run:
+                nodes[i].run()
 
-        if cycles > MAX_LOOP_ITERATIONS:
-            logging.error("--- Premature termination. We ran out of allowed cycles by MAX_LOOP_ITERATIONS. ---")
-            break
+            # Exit the main loop if GENERATE_BLOCKS was forged on the majority of the nodes.
+            nodes_with_required_number_of_blocks = 0
+            for i in range(NODE_COUNT):
+                if len(nodes[i].chain) >= GENERATE_BLOCKS:
+                    nodes_with_required_number_of_blocks += 1
+            if nodes_with_required_number_of_blocks > NODE_COUNT/2.0:
+                logging.info("--- All the blocks we requested were forged, stopping gracefully. ---")
+                break
+
+            if cycles > MAX_LOOP_ITERATIONS:
+                logging.error("--- Premature termination. We ran out of allowed cycles by MAX_LOOP_ITERATIONS. ---")
+                break
 
     # Gather stats on generated blocks.
     blocks_generated = {}
@@ -119,10 +125,6 @@ def main():
         logging.error("No blocks were generated.")
 
     logging.info("{} cycles were executed.".format(cycles))
-    logging.info("First node chain:")
-    for block in nodes[0].chain:
-        logging.info(block)
-    print("THE END")
 
 
 if __name__ == "__main__":

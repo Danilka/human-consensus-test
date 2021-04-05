@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections import Set
 from block import Block
+from colored import fg, bg, attr
 
 
 class Candidate:
@@ -174,13 +175,46 @@ class Candidate:
         pass
 
     def __str__(self):
-        return "C for {} As:{} ASUs:{} Vs:{} VSUs:{}".format(
-            self.block,
-            len(self.messages_approve),
-            len(self.approve_status_updates),
-            len(self.messages_vote),
-            len(self.vote_status_updates),
-        )
+        r = "["
+
+        # Pick text color based on if the block is blank or not.
+        text_color = fg('black') if self.block.node_id is None else fg('white')
+
+        # Block ID
+        r += text_color
+        r += str(self.block.block_id)
+        r += attr('reset')
+
+        # Approves
+        approves = len(self.messages_approve)
+        approve_sus = len(self.approve_status_updates)
+        for i in range(max(approves, approve_sus)):
+            if i < approve_sus and i < approves:
+                r += bg('gold_1')
+                r += "|"
+            elif i < approves:
+                r += bg('gold_1')
+                r += " "
+            elif i < approve_sus:
+                r += "|"
+            r += attr('reset')
+
+        # Votes
+        votes = len(self.messages_vote)
+        vote_sus = len(self.vote_status_updates)
+        for i in range(max(votes, vote_sus)):
+            if i < vote_sus and i < votes:
+                r += bg('deep_sky_blue_3b')
+                r += "|"
+            elif i < votes:
+                r += bg('deep_sky_blue_3b')
+                r += " "
+            elif i < vote_sus:
+                r += "|"
+            r += attr('reset')
+
+        r += "]"
+        return r
 
     def __repr__(self):
         return self.__str__()
@@ -209,3 +243,13 @@ class CandidateManager(list):
             if self[i].block == block:
                 return i
         return None
+
+    def __str__(self):
+        """Get printable string representing all candidate in this CandidateManager."""
+        r = ""
+        if not self:
+            return r
+
+        for candidate in self:
+            r += str(candidate)
+        return r
