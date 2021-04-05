@@ -253,6 +253,6 @@ class CandidateManager(list):
         if not self:
             return r
 
-        for candidate in self:
+        for candidate in sorted(self, key=lambda x: x.block.node_id if x.block.node_id is not None else float('inf')):
             r += str(candidate)
         return r
