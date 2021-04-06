@@ -128,6 +128,9 @@ class Node:
 
             # Try sending a vote status update.
             self.send_vote_status_update_once()
+
+            # Try forging the candidate.
+            self.try_forging_candidate_block()
         except self.NodeValueError:
             # No candidates.
 
@@ -140,7 +143,7 @@ class Node:
         # Try requesting chain update.
         self.try_requesting_chain_update()
 
-    def receive(self, message_in: Message) -> bool:
+    def receive(self, message_in: Message):
         """Receive a message from another node."""
 
         # TYPE_CHAIN_UPDATE_REQUEST - Does not require message validation.
@@ -154,11 +157,10 @@ class Node:
         try:
             if not self.validate_message(message_in):
                 # If the message cannot be trusted, we simply disregard it.
-                return False
+                return
         except self.NodeNotEnoughData:
             # If there is not enough data to validate the message we save it for later.
-            self.delay_message(message_in)
-            return False
+            return self.delay_message(message_in)
 
         # Check if the block has already been forged.
         if message_in.blocks[0] in self.chain:
@@ -169,7 +171,7 @@ class Node:
                     message_in.node_id,
                 )
             )
-            return False
+            return
 
         # Try finding passed block in the existing candidates.
         if message_in.blocks[0].block_id in self.candidates\
@@ -188,8 +190,7 @@ class Node:
                     # However, since the update is requested, we will get it as part of the update.
                     # So we just discard the message.
                     # self.delay_message(message_in)
-
-                    return False
+                    return
             except self.NodeValueError as e:
                 # This should not happen.
                 logging.error(
@@ -207,12 +208,10 @@ class Node:
             # Check if the block is from the future.
             if self.get_next_block_id() < message_in.blocks[0].block_id:
                 # Request chain update from this node instead of processing this message.
-                self.request_chain_update(node_ids=[message_in.node_id])
-                return False
+                return self.request_chain_update(node_ids=[message_in.node_id])
             elif message_in.blocks[0].block_id < len(self.chain):
                 # Check if the block has already been forged. Then send a chain update to that node.
-                self.send_chain_update(message_in.node_id, message_in.blocks[0].block_id-1)
-                return False
+                return self.send_chain_update(message_in.node_id, message_in.blocks[0].block_id-1)
             elif self.get_next_block_id() != message_in.blocks[0].block_id:
                 raise ValueError(
                     "N{} received a message from N{} with a block #{} "
@@ -226,17 +225,7 @@ class Node:
                 )
 
             # Create a candidate out of this block.
-            if self.add_candidate(Candidate(block=message_in.blocks[0])):
-                # Since we just got a new block and verified it to be good, we broadcast an approval for it.
-                self.send_approve_once()
-            else:
-                # Sanity check, this should not trigger.
-                logging.error(
-                    "N{} received a message {} and tried to add a candidate for it, but it didn't work.".format(
-                        self.node_id,
-                        message_in,
-                    )
-                )
+            self.add_candidate(Candidate(block=message_in.blocks[0]))
 
         # COMMIT
         if message_in.message_type == Message.TYPE_COMMIT:
@@ -288,14 +277,14 @@ class Node:
         # This logic is already handled by block validation in self.receive()
         return True
 
-    def receive_approve(self, message_in: Message) -> bool:
+    def receive_approve(self, message_in: Message):
         """Receive an approve message."""
 
         # If we already sent approve status update, we do not need extra approves.
         if not self.keep_excessive_messages and self.candidates[self.active_candidate.block.block_id].check_action(
             Candidate.ACTION_APPROVE_STATUS_UPDATE
         ):
-            return False
+            return
 
         if message_in.node_id in self.active_candidate.messages_approve:
             # We already have this message, so we disregard it.
@@ -305,17 +294,12 @@ class Node:
                     message_in.node_id,
                 )
             )
-            return True
+            return
 
         # Save incoming approve.
         self.active_candidate.messages_approve[message_in.node_id] = message_in
 
-        # Send approve status update if we need to.
-        self.send_approve_status_update_once()
-
-        return True
-
-    def receive_approve_status_update(self, message_in: Message) -> bool:
+    def receive_approve_status_update(self, message_in: Message):
         """Receive an approve status update message."""
 
         # Verify message chain.
@@ -326,7 +310,7 @@ class Node:
                     self.node_id,
                     message_in.node_id,
                 ))
-                return False
+                return
 
         if not self.enough_approves(message_in.messages_chain):
             # This means that there is not enough votes for approval.
@@ -336,7 +320,7 @@ class Node:
                     message_in.node_id,
                 )
             )
-            return False
+            return
 
         if self.active_candidate and self.active_candidate.block != message_in.blocks[0]:
             # This means that my block is different from the one that is being approved.
@@ -349,7 +333,7 @@ class Node:
                     message_in.blocks[0],
                     self.active_candidate.block,
                 ))
-            return False
+            return
 
         ### At this point the blocks match and the messages chan from that node is correct. ###
 
@@ -364,12 +348,7 @@ class Node:
         # TODO: Comment this out as the other node's approval chain could still fill up and be updated.
         # self.messages_vote[message_in.node_id] = message_in.messages_chain
 
-        # We have enough approves, now we also send out our vote.
-        self.send_vote_once()
-
-        return True
-
-    def receive_vote(self, message_in: Message) -> bool:
+    def receive_vote(self, message_in: Message):
         """Receive a vote message."""
 
         # If we already have this message, so we disregard it.
@@ -380,20 +359,12 @@ class Node:
                     message_in.node_id,
                 )
             )
-            return False
+            return
 
         # Save the vote.
         self.active_candidate.messages_vote[message_in.node_id] = message_in.messages_chain
 
-        # Try sending vote status update if we have enough votes.
-        self.send_vote_status_update_once()
-
-        # Try forging the candidate block.
-        self.try_forging_candidate_block()
-
-        return True
-
-    def receive_vote_status_update(self, message_in: Message) -> bool:
+    def receive_vote_status_update(self, message_in: Message):
         """Receive a vote status update message."""
         # If we are getting this, it means that the block is forged by others, but not us.
         # So we update the info and try to forge ourselves.
@@ -422,17 +393,6 @@ class Node:
 
         # Increment the vote_status update counter with the info we got.
         self.active_candidate.vote_status_updates.add(message_in.node_id)
-
-        # The rest, in theory, should always pass.
-        # Since we just got a vote status update that has complete info for this block.
-
-        # Send vote status update if we need to.
-        self.send_vote_status_update_once()
-
-        # Try forging the candidate block.
-        self.try_forging_candidate_block()
-
-        return True
 
     def receive_chain_update_request(self, message_in: Message) -> bool:
         """Receive a chain update request."""
