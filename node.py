@@ -113,12 +113,28 @@ class Node:
             # If there are still messages in self.messages_buffer, but they are not ready to be processed we keep going.
             pass
 
-        # Try generating the block if we are the appropriate node for it.
-        if not self.active_candidate:
+        # Pick the best candidate to work with.
+        try:
+            self.set_active_candidate()
+
+            # Try sending an approve.
+            self.send_approve_once()
+
+            # Try sending an approve status update.
+            self.send_approve_status_update_once()
+
+            # Try sending a vote.
+            self.send_vote_once()
+
+            # Try sending a vote status update.
+            self.send_vote_status_update_once()
+        except self.NodeValueError:
+            # No candidates.
+
+            # Try generating the block if we are the appropriate node for it.
             self.gen_commit()
 
-        # Try voting for a blank block if there are no candidates.
-        if not self.active_candidate:
+            # Try voting for a blank block if there are no candidates.
             self.try_approving_blank_block()
 
         # Try requesting chain update.
@@ -193,6 +209,21 @@ class Node:
                 # Request chain update from this node instead of processing this message.
                 self.request_chain_update(node_ids=[message_in.node_id])
                 return False
+            elif message_in.blocks[0].block_id < len(self.chain):
+                # Check if the block has already been forged. Then send a chain update to that node.
+                self.send_chain_update(message_in.node_id, message_in.blocks[0].block_id-1)
+                return False
+            elif self.get_next_block_id() != message_in.blocks[0].block_id:
+                raise ValueError(
+                    "N{} received a message from N{} with a block #{} "
+                    "that is not forged, not a future block, "
+                    "and not the next in line {}. This should never happen.".format(
+                        self.node_id,
+                        message_in.node_id,
+                        message_in.blocks[0].block_id,
+                        self.get_next_block_id(),
+                    )
+                )
 
             # Create a candidate out of this block.
             if self.add_candidate(Candidate(block=message_in.blocks[0])):
@@ -432,6 +463,32 @@ class Node:
         self.send_message(message_out, message_in.node_id)
         return True
 
+    def send_chain_update(self, node_id, starting_block_id: int = 0):
+        """Send chain update to a specific node starting from a starting_block_id."""
+
+        # Blocks that need to be included into the message.
+        # Note that indexes in this list are not block IDs!
+        blocks = []
+        if starting_block_id < len(self.chain)-1:
+            # Pick a diff between received block and the last block we have.
+            for i in range(starting_block_id, len(self.chain)):
+                blocks.append(self.chain[i])
+
+        # Message
+        next_block_id = self.get_next_block_id()
+        message_out = Message(
+            node_id=self.node_id,
+            message_type=Message.TYPE_CHAIN_UPDATE,
+            blocks=blocks,
+            candidates={
+                next_block_id: self.candidates[next_block_id]
+            } if next_block_id in self.candidates else None,
+        )
+
+        # Send
+        self.send_message(message_out, node_id)
+        return True
+
     def receive_chain_update(self, message_in: Message) -> bool:
         """Receive a chain update."""
 
@@ -447,7 +504,7 @@ class Node:
             next_block_id = self.get_next_block_id()
             while next_block_id in block_index:
                 if self.verify_block(block_index[next_block_id]):
-                    self.chain[next_block_id] = block_index[next_block_id]
+                    self.chain.insert(next_block_id, block_index[next_block_id])
                 else:
                     logging.warning(
                         "N{} received a chain update from N{}"
@@ -477,8 +534,8 @@ class Node:
 
             candidate: Candidate
             for candidate in message_in.candidates[candidate_id]:
-                local_candidate_id = self.candidates[candidate_id].find(candidate)
-                if local_candidate_id:
+                local_candidate_id = self.candidates[candidate_id].find(candidate.block)
+                if local_candidate_id is not None:
                     # We have a local candidate for the same block. Pick the best.
                     if self.candidates[candidate_id][local_candidate_id] < candidate:
                         self.candidates[candidate_id][local_candidate_id] = candidate
@@ -624,14 +681,11 @@ class Node:
         return True
 
     def try_requesting_chain_update(self):
-        """
-        Try to request a chain update from other nodes if there is enough of standby time.
-        :return: True - update requested. False - it's not time yet.
-        """
+        """Try to request a chain update from other nodes if there is enough of standby time."""
 
         # Check if it is time to request an update.
         if self.last_activity_time() + self.chain_update_timeout > time.time():
-            return False
+            return
 
         self.request_chain_update()
 
@@ -639,12 +693,6 @@ class Node:
         """Send approval message to everyone once."""
 
         # Check if we sent an approve for any candidate.
-
-        # TODO Remove this comment once debugged
-        # if self.active_candidate is None:
-        #     print(self.candidates)
-        #     print(self.chain)
-        #     print(self.active_candidate)
         if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_APPROVE):
             return False
 
@@ -828,9 +876,9 @@ class Node:
 
         return True
 
-    def set_active_candidate(self, block=None):
+    def set_active_candidate(self, block: Union[Block, None] = None):
         """
-        Sets self.active_candidate to the current candidate or a passed block.
+        Sets self.active_candidate to the best current candidate or a passed block.
         :param block: Instance of a Block or None
         :raises: NodeValueError if the candidate was not set.
         :return:
@@ -846,7 +894,13 @@ class Node:
 
         # Check if this block is next in line.
         if self.get_next_block_id() != block.block_id:
-            raise self.NodeValueError("Passed block is not the next block to be processed.")
+            raise self.NodeValueError(
+                "Passed block is not the next block to be processed.\n"
+                "Expected block #{}, got #{}".format(
+                    self.get_next_block_id(),
+                    block.block_id,
+                )
+            )
 
         # Check if the same block is in candidates.
         for i in range(len(self.candidates[block.block_id])):
@@ -872,33 +926,11 @@ class Node:
         if next_block_id not in self.candidates:
             raise self.NodeValueError("There is no candidate available.")
 
-        # Return if there is only one candidate.
-        if len(self.candidates[next_block_id]) == 1:
-            return self.candidates[next_block_id][0]
-
         # Return if there is a candidate that is the most fitting.
-        candidate = sorted(  # We sort the list of candidates.
-            self.candidates[next_block_id],     # For the given block.
-            key=lambda x: (
-                not x.forged,   # Forged goes first. Reversed for True to go first.
-                not x.check_action(Candidate.ACTION_VOTE_STATUS_UPDATE),    # Vote status update goes second.
-                not x.check_action(Candidate.ACTION_VOTE),  # Vote goes second.
-                not x.check_action(Candidate.ACTION_APPROVE_STATUS_UPDATE),   # Approved status update goes third.
-                not x.check_action(Candidate.ACTION_APPROVE),   # Approved goes forth.
-            ),
-        )[0]    # Return the first in the list.
-
-        # This should not trigger. Just a sanity check.
-        if candidate.forged:
-            logging.error(
-                "N{} is trying to retrieve it's current candidate "
-                "and there is one that is already forged for B{}".format(
-                    self.node_id,
-                    candidate.block.block_id,
-                )
-            )
-
-        return candidate
+        try:
+            return self.candidates[next_block_id].best_candidate()
+        except ValueError:
+            self.NodeValueError("There is no candidate available.")
 
     def enough_approves(self, message_chain=None) -> bool:
         """

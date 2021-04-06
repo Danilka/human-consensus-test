@@ -19,10 +19,10 @@ MAX_LOOP_ITERATIONS = 10**7
 MAX_DISTANCE = 100.0
 
 # Number of nodes.
-NODE_COUNT = 8
+NODE_COUNT = 9
 
 # Number of blocks to generate.
-GENERATE_BLOCKS = 16
+GENERATE_BLOCKS = 64
 
 # Lost Message % [0, 100) on send
 LOST_MESSAGES_PERCENTAGE = 0.0
@@ -34,7 +34,7 @@ DELAY_MULTIPLIER = 0.01
 BLANK_BLOCK_TIMEOUT = 0.25    # In seconds.
 
 # Timeout for inactivity before a node requests chain update.
-CHAIN_UPDATE_TIMEOUT = 1000.0    # In seconds.
+CHAIN_UPDATE_TIMEOUT = 10.0    # In seconds.
 
 
 def main():
@@ -66,7 +66,7 @@ def main():
     nodes_print = []
     nodes_with_required_number_of_blocks = 0
     cycles = 0
-    with output(output_type="list", initial_len=NODE_COUNT, interval=10) as nodes_print:
+    with output(output_type="list", initial_len=NODE_COUNT, interval=50) as nodes_print:
         while True:
             cycles += 1
 

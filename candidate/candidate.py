@@ -1,7 +1,9 @@
 from __future__ import annotations
 from collections import Set
+from typing import Union
 from block import Block
 from colored import fg, bg, attr
+# TODO: Change __repr__ to text with no decorations
 
 
 class Candidate:
@@ -81,9 +83,9 @@ class Candidate:
         """
         Check if another Candidate is for the same kind of block.
         :param other: Instance of a Candidate.
-        :return: True - it's the same candidate for the same block. False - not.
+        :return: True - it's the same candidate for the same block position. False - not.
         """
-        return self.block == other.block
+        return self.block.block_id == other.block.block_id
 
     def __eq__(self, other: Candidate) -> bool:
         """Is another object equal to self?"""
@@ -220,39 +222,5 @@ class Candidate:
         return r
 
     def __repr__(self):
+        # TODO Change to non visually decorated representation.
         return self.__str__()
-
-
-class CandidateManager(list):
-
-    def check_action(self, action: str) -> bool:
-        """
-        Check if the action was already taken on any candidate.
-        :param action: One of the actions from Candidate.POSSIBLE_ACTIONS
-        :return: True if action has already been taken, False if the action has not yet been taken.
-        """
-        for candidate in self:
-            if candidate.check_action(action):
-                return True
-        return False
-
-    def find(self, block: Block):
-        """
-        Find candidate in the list by a passed block.
-        :param block: Block to look for.
-        :return: Index of the first occurrence of Candidate with this block; None if not found.
-        """
-        for i in range(len(self)):
-            if self[i].block == block:
-                return i
-        return None
-
-    def __str__(self):
-        """Get printable string representing all candidate in this CandidateManager."""
-        r = ""
-        if not self:
-            return r
-
-        for candidate in sorted(self, key=lambda x: x.block.node_id if x.block.node_id is not None else float('inf')):
-            r += str(candidate)
-        return r
