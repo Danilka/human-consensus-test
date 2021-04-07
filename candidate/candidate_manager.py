@@ -1,9 +1,6 @@
 from __future__ import annotations
-from collections import Set
 from typing import Union
 from block import Block
-from colored import fg, bg, attr
-# TODO: Change __repr__ to text with no decorations
 from candidate.candidate import Candidate
 
 
@@ -57,8 +54,9 @@ class CandidateManager(list):
 
         return None
 
-    def __str__(self):
-        """Get printable string representing all candidate in this CandidateManager."""
+    def __str__(self) -> str:
+        """Get colored string representing all candidate in this CandidateManager."""
+
         r = ""
         if not self:
             return r
@@ -67,6 +65,14 @@ class CandidateManager(list):
             r += str(candidate)
         return r
 
-    def __repr__(self):
-        # TODO Change to non visually decorated representation.
-        return self.__str__()
+    def __repr__(self) -> str:
+        """Get basic text representation of all candidates in this CandidateManager."""
+
+        if not self:
+            return ""
+
+        r = "["
+        for candidate in self:
+            r += candidate.__repr__()
+
+        return r + "]"

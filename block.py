@@ -1,5 +1,6 @@
 import time
 from typing import final, Union
+from colored import bg, fg, attr
 
 
 @final
@@ -52,12 +53,29 @@ class Block:
         return not self.__eq__(other)
 
     def __str__(self) -> str:
-        """Represent instance of the class as a string."""
+        """
+        Represent block as a colored string.
+        [4] <- example of a block with ID=4.
+        ID is in green if the block is created by a node.
+        ID is gray if it's a blank block.
+        """
+
+        return "{reset}{bg}{fg}{block_id}{reset}".format(
+            bg=bg('green') if self.node_id is not None else bg('grey_30'),
+            fg=fg('white'),
+            reset=attr('reset'),
+            block_id=self.block_id,
+        )
+
+    def __repr__(self) -> str:
+        """
+        Plain text representation of the block.
+        B4byN7: Block body text. <- example of a block with ID 4, created by the node with ID 7.
+        B4byN_: Blank block. <- example of a blank block ID 4
+        """
+
         return "B{}byN{}{}".format(
             self.block_id,
             self.node_id if self.node_id is not None else "_",
             ": {}".format(self.body) if self.body else "",
         )
-
-    def __repr__(self):
-        return self.__str__()

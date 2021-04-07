@@ -1,9 +1,7 @@
 from __future__ import annotations
 from collections import Set
-from typing import Union
 from block import Block
 from colored import fg, bg, attr
-# TODO: Change __repr__ to text with no decorations
 
 
 class Candidate:
@@ -218,9 +216,38 @@ class Candidate:
                 r += "|"
         r += attr('reset')
 
-        r += "]"
-        return r
+        return r + "]"
 
     def __repr__(self):
-        # TODO Change to non visually decorated representation.
-        return self.__str__()
+        r = "["
+
+        # Add underscore in front of the block number.
+        if self.block.node_id is None:
+            r += "_"
+
+        # Block ID
+        r += str(self.block.block_id)
+
+        # Approves
+        approves = len(self.messages_approve)
+        approve_sus = len(self.approve_status_updates)
+        for i in range(max(approves, approve_sus)):
+            if i < approve_sus and i < approves:
+                r += "|"
+            elif i < approves:
+                r += "-"
+            elif i < approve_sus:
+                r += "/"
+
+        # Votes
+        votes = len(self.messages_vote)
+        vote_sus = len(self.vote_status_updates)
+        for i in range(max(votes, vote_sus)):
+            if i < vote_sus and i < votes:
+                r += "#"
+            elif i < votes:
+                r += "%"
+            elif i < vote_sus:
+                r += "="
+
+        return r + "]"
