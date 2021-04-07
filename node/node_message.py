@@ -36,7 +36,7 @@ class NodeMessage(NodeBlock):
         self.messages_buffer.append(message)
 
         # Sort the buffer.
-        self.messages_buffer = sorted(self.messages_buffer, key=lambda x: x.blocks[0].block_id, reverse=True)
+        self.messages_buffer = sorted(self.messages_buffer, key=lambda x: x.block.block_id, reverse=True)
 
     def get_delayed_message(self) -> Message:
         """
@@ -51,14 +51,18 @@ class NodeMessage(NodeBlock):
 
         # Make sure the node is ready to process this message.
         next_block_id = self.get_next_block_id()
-        if self.messages_buffer[-1].blocks[0].block_id > next_block_id:
+        if self.messages_buffer[-1].block.block_id > next_block_id:
             raise self.NodeValueError(
                 "The node is not ready to process next message in from self.messages_buffer.\n"
                 "Next block to be processed by this node is B{}. The message requires B{}".format(
                     next_block_id,
-                    self.messages_buffer[-1].blocks[0].block_id,
+                    self.messages_buffer[-1].block.block_id,
                 )
             )
 
         # Pull and return the message.
         return self.messages_buffer.pop()
+
+    def message_to_candidate(self, message_in: Message):
+        """Pull candidate from a message_in.block and add or pick current candidate."""
+        # TODO

@@ -19,7 +19,7 @@ MAX_LOOP_ITERATIONS = 10**7
 MAX_DISTANCE = 100.0
 
 # Number of nodes.
-NODE_COUNT = 9
+NODE_COUNT = 4
 
 # Number of blocks to generate.
 GENERATE_BLOCKS = 64
@@ -34,7 +34,7 @@ DELAY_MULTIPLIER = 0.01
 BLANK_BLOCK_TIMEOUT = 0.25    # In seconds.
 
 # Timeout for inactivity before a node requests chain update.
-CHAIN_UPDATE_TIMEOUT = 10.0    # In seconds.
+CHAIN_UPDATE_TIMEOUT = 3.0    # In seconds.
 
 
 def main():

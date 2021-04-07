@@ -17,7 +17,8 @@ class Message:
 
     node_id: int
     message_type: str
-    blocks: List[Block]
+    block: Block
+    chain: List[Block]
     messages_chain: Union[list, dict, None]
     candidates: Union[Dict[CandidateManager], None]
 
@@ -25,7 +26,8 @@ class Message:
         self,
         node_id: int,
         message_type: str,
-        blocks: List[Block] = (),
+        block: Union[Block, None] = None,
+        chain: List[Block] = (),
         messages_chain: Union[list, dict, None] = None,
         candidates: Union[Dict[CandidateManager], None] = None,
     ):
@@ -33,13 +35,15 @@ class Message:
         Constructor
         :param node_id: ID of the node sending the message.
         :param message_type: One of the self.TYPE_***
-        :param blocks: List of blocks that are attached to the message.
+        :param block: Block that are attached to the message.
+        :param chain: Chain attached to the message.
         :param messages_chain: Messages that prove the block.
         :param candidates: dict of {block_id : CandidateManager(list)}
         """
         self.node_id = node_id
         self.message_type = message_type
-        self.blocks = [block for block in blocks if block is not None]
+        self.block = block
+        self.chain = chain
         self.messages_chain = messages_chain
         self.candidates = candidates
 
@@ -50,13 +54,15 @@ class Message:
         if (
                 self.node_id,
                 self.message_type,
-                self.blocks,
+                self.block,
+                self.chain,
                 self.candidates
         ) != (
                 other.node_id,
                 other.message_type,
-                other.blocks,
-                self.candidates
+                other.block,
+                other.chain,
+                other.candidates
         ):
             return False
         if not self.messages_chain and not other.messages_chain:
@@ -74,19 +80,19 @@ class Message:
 
     def __str__(self) -> str:
         """Represent instance of the class as a string."""
-        return "[{message_type}] B{blocks} messages_chain size = {messages_chain_size}".format(
+        return "[{message_type}] B{block} messages_chain size = {messages_chain_size}".format(
             message_type=self.message_type,
-            blocks=self.blocks[0].block_id if self.blocks else self.blocks,
+            block=self.block.block_id if self.block else "_",
             messages_chain_size=len(self.messages_chain) if self.messages_chain else 0,
         )
 
     # TODO Remove in the future revisions.
     def __setattr__(self, key, value):
-        if key == 'block':
-            raise KeyError('Message.block was deprecated, please use Message.block[0] instead.')
+        if key == 'blocks':
+            raise KeyError('Message.blocks[0] was deprecated, please use Message.block instead.')
         return super(Message, self).__setattr__(key, value)
 
     def __getattr__(self, item):
-        if item == 'block':
-            raise KeyError('Message.block was deprecated, please use Message.block[0] instead.')
+        if item == 'blocks':
+            raise KeyError('Message.blocks[0] was deprecated, please use Message.block instead.')
         return self.__getattribute__(item)

@@ -45,7 +45,7 @@ class NodeApprove(NodeCommit):
         message_out = Message(
             node_id=self.node_id,
             message_type=Message.TYPE_APPROVE,
-            blocks=[self.active_candidate.block],
+            block=self.active_candidate.block,
         )
 
         # Save approve message into our own log as well.
@@ -71,7 +71,7 @@ class NodeApprove(NodeCommit):
 
         message_out = Message(
             node_id=self.node_id,
-            blocks=[self.active_candidate.block],
+            block=self.active_candidate.block,
             message_type=Message.TYPE_APPROVE_STATUS_UPDATE,
             # TODO: This should have a separate diff for each node with only messages
             # that they need to reach approval.
@@ -106,7 +106,7 @@ class NodeApprove(NodeCommit):
 
         # Verify message chain.
         for _, message_in_chain in message_in.messages_chain.items():
-            if not self.validate_block(message_in_chain.blocks[0]):
+            if not self.validate_block(message_in_chain.block):
                 # Got a message with a wrong block.
                 logging.error("N{} received an approve status update from N{} with a wrong block".format(
                     self.node_id,
@@ -124,7 +124,7 @@ class NodeApprove(NodeCommit):
             )
             return
 
-        if self.active_candidate and self.active_candidate.block != message_in.blocks[0]:
+        if self.active_candidate and self.active_candidate.block != message_in.block:
             # This means that my block is different from the one that is being approved.
             # TODO: We need to find the difference and update our chain up to this block.
             logging.error(
@@ -132,7 +132,7 @@ class NodeApprove(NodeCommit):
                 "that differs from my candidate ({}).".format(
                     self.node_id,
                     message_in.node_id,
-                    message_in.blocks[0],
+                    message_in.block,
                     self.active_candidate.block,
                 ))
             return

@@ -28,7 +28,7 @@ class Node(NodeForge):
     def run(self, message: Union[Message, None] = None):
         """
         Main loop method.
-        :param message: Message object to be received by this node.
+        :param Message message: Message object to be received by this node.
         :return:
         """
 
@@ -77,13 +77,6 @@ class Node(NodeForge):
     def receive(self, message_in: Message):
         """Receive a message from another node."""
 
-        # TYPE_CHAIN_UPDATE_REQUEST - Does not require message validation.
-        if message_in.message_type == Message.TYPE_CHAIN_UPDATE_REQUEST:
-            return self.receive_chain_update_request(message_in)
-        # TYPE_CHAIN_UPDATE
-        elif message_in.message_type == Message.TYPE_CHAIN_UPDATE:
-            return self.receive_chain_update(message_in)
-
         # Validate an incoming message.
         try:
             if not self.validate_message(message_in):
@@ -93,8 +86,16 @@ class Node(NodeForge):
             # If there is not enough data to validate the message we save it for later.
             return self.delay_message(message_in)
 
+        # TYPE_CHAIN_UPDATE_REQUEST - Does not require message validation.
+        if message_in.message_type == Message.TYPE_CHAIN_UPDATE_REQUEST:
+            return self.receive_chain_update_request(message_in)
+
+        # TYPE_CHAIN_UPDATE
+        elif message_in.message_type == Message.TYPE_CHAIN_UPDATE:
+            return self.receive_chain_update(message_in)
+
         # Check if the block has already been forged.
-        if message_in.blocks[0] in self.chain:
+        if message_in.block in self.chain:
             # TODO: We should probably send the proof message to the requesting node, so it can forge the block as well.
             logging.debug(
                 "N{} received a message from N{} and discarded it because this block is already forged.".format(
@@ -105,13 +106,13 @@ class Node(NodeForge):
             return
 
         # Try finding passed block in the existing candidates.
-        if message_in.blocks[0].block_id in self.candidates\
-                and self.candidates[message_in.blocks[0].block_id].find(message_in.blocks[0]) is not None:
+        if message_in.block.block_id in self.candidates\
+                and self.candidates[message_in.block.block_id].find(message_in.block) is not None:
             try:
                 # Check if the block is next to be processed.
                 next_block_if = self.get_next_block_id()
-                if next_block_if == message_in.blocks[0].block_id:
-                    self.set_active_candidate(message_in.blocks[0])
+                if next_block_if == message_in.block.block_id:
+                    self.set_active_candidate(message_in.block)
                 else:
                     # Means that the block is from the future, so we request a chain update from that block.
                     # We've already checked if this block was in the chain before.
@@ -137,26 +138,26 @@ class Node(NodeForge):
                 raise e
         else:
             # Check if the block is from the future.
-            if self.get_next_block_id() < message_in.blocks[0].block_id:
+            if self.get_next_block_id() < message_in.block.block_id:
                 # Request chain update from this node instead of processing this message.
                 return self.request_chain_update(node_ids=[message_in.node_id])
-            elif message_in.blocks[0].block_id < len(self.chain):
+            elif message_in.block.block_id < len(self.chain):
                 # Check if the block has already been forged. Then send a chain update to that node.
-                return self.send_chain_update(message_in.node_id, message_in.blocks[0].block_id-1)
-            elif self.get_next_block_id() != message_in.blocks[0].block_id:
+                return self.send_chain_update(message_in.node_id, message_in.block.block_id-1)
+            elif self.get_next_block_id() != message_in.block.block_id:
                 raise ValueError(
                     "N{} received a message from N{} with a block #{} "
                     "that is not forged, not a future block, "
                     "and not the next in line {}. This should never happen.".format(
                         self.node_id,
                         message_in.node_id,
-                        message_in.blocks[0].block_id,
+                        message_in.block.block_id,
                         self.get_next_block_id(),
                     )
                 )
 
             # Create a candidate out of this block.
-            self.add_candidate(Candidate(block=message_in.blocks[0]))
+            self.add_candidate(Candidate(block=message_in.block))
 
         # COMMIT
         if message_in.message_type == Message.TYPE_COMMIT:

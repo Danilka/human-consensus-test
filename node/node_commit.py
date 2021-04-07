@@ -29,7 +29,7 @@ class NodeCommit(NodeMessage):
         message = Message(
             node_id=self.node_id,
             message_type=Message.TYPE_COMMIT,
-            blocks=[block],
+            block=block,
         )
 
         self.broadcast(message)

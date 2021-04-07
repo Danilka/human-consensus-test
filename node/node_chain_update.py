@@ -15,18 +15,21 @@ class NodeChainUpdate(NodeVote):
 
         # Blocks that need to be included into the message.
         # Note that indexes in this list are not block IDs!
-        blocks = []
-        if starting_block_id < len(self.chain)-1:
-            # Pick a diff between received block and the last block we have.
-            for i in range(starting_block_id, len(self.chain)):
-                blocks.append(self.chain[i])
+        if starting_block_id:
+            chain_out = self.chain
+        else:
+            chain_out = []
+            if starting_block_id < len(self.chain)-1:
+                # Pick a diff between received block and the last block we have.
+                for i in range(starting_block_id, len(self.chain)):
+                    chain_out.append(self.chain[i])
 
         # Message
         next_block_id = self.get_next_block_id()
         message_out = Message(
             node_id=self.node_id,
             message_type=Message.TYPE_CHAIN_UPDATE,
-            blocks=blocks,
+            chain=chain_out,
             candidates={
                 next_block_id: self.candidates[next_block_id]
             } if next_block_id in self.candidates else None,
@@ -40,11 +43,11 @@ class NodeChainUpdate(NodeVote):
         """Receive a chain update."""
 
         # Update chain.
-        if message_in.blocks:
+        if message_in.chain:
 
             # Create searchable index.
             block_index = {}
-            for block in message_in.blocks:
+            for block in message_in.chain:
                 block_index[block.block_id] = block
 
             # Iterate and update self.chain for only the blocks we need.
@@ -94,6 +97,7 @@ class NodeChainUpdate(NodeVote):
 
     def request_chain_update(self, node_ids: Union[None, List[int]] = None):
         # Get the last block in the chain.
+
         try:
             last_block = self.get_last_block()
         except self.NodeValueError:
@@ -103,7 +107,7 @@ class NodeChainUpdate(NodeVote):
         message = Message(
             node_id=self.node_id,
             message_type=Message.TYPE_CHAIN_UPDATE_REQUEST,
-            blocks=[last_block],   # Signifies the last block we have.
+            block=last_block,   # Signifies the last block we have.
         )
 
         # Send or broadcast the message.
@@ -116,35 +120,6 @@ class NodeChainUpdate(NodeVote):
         # Update the timer.
         self.time_update_requested = time.time()
 
-    def receive_chain_update_request(self, message_in: Message) -> bool:
-        """Receive a chain update request."""
-
-        # Blocks that need to be included into the message.
-        # Note that indexes in this list are not block IDs!
-        blocks = []
-        if not message_in.blocks:
-            # The whole chain should be sent.
-            blocks = self.chain
-        elif message_in.blocks[0].block_id < len(self.chain)-1:
-            # Pick a diff between received block and the last block we have.
-            for i in range(message_in.blocks[0].block_id+1, len(self.chain)):
-                blocks.append(self.chain[i])
-
-        # Message
-        next_block_id = self.get_next_block_id()
-        message_out = Message(
-            node_id=self.node_id,
-            message_type=Message.TYPE_CHAIN_UPDATE,
-            blocks=blocks,
-            candidates={
-                next_block_id: self.candidates[next_block_id]
-            } if next_block_id in self.candidates else None,
-        )
-
-        # Send
-        self.send_message(message_out, message_in.node_id)
-        return True
-
     def try_requesting_chain_update(self):
         """Try to request a chain update from other nodes if there is enough of standby time."""
 
@@ -153,3 +128,32 @@ class NodeChainUpdate(NodeVote):
             return
 
         self.request_chain_update()
+
+    def receive_chain_update_request(self, message_in: Message) -> bool:
+        """Receive a chain update request."""
+
+        # Blocks that need to be included into the message.
+        # Note that indexes in this list are not block IDs!
+        chain_out = []
+        if not message_in.block:
+            # The whole chain should be sent.
+            chain_out = self.chain
+        elif message_in.block.block_id < len(self.chain)-1:
+            # Pick a diff between received block and the last block we have.
+            for i in range(message_in.block.block_id+1, len(self.chain)):
+                chain_out.append(self.chain[i])
+
+        # Message
+        next_block_id = self.get_next_block_id()
+        message_out = Message(
+            node_id=self.node_id,
+            message_type=Message.TYPE_CHAIN_UPDATE,
+            chain=chain_out,
+            candidates={
+                next_block_id: self.candidates[next_block_id]
+            } if next_block_id in self.candidates else None,
+        )
+
+        # Send
+        self.send_message(message_out, message_in.node_id)
+        return True

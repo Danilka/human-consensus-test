@@ -45,7 +45,7 @@ class NodeVote(NodeApprove):
         # Prepare the message.
         message_out = Message(
             node_id=self.node_id,
-            blocks=[self.active_candidate.block],
+            block=self.active_candidate.block,
             message_type=Message.TYPE_VOTE,
             # TODO: This should have a separate diff for each node with only messages that they need to reach approval.
             # messages_chain={**self.messages_vote, **{self.node_id: self.messages_approve}}
@@ -69,7 +69,7 @@ class NodeVote(NodeApprove):
         # Prepare the message.
         message_out = Message(
             node_id=self.node_id,
-            blocks=[self.active_candidate.block],
+            block=self.active_candidate.block,
             message_type=Message.TYPE_VOTE_STATUS_UPDATE,
             # TODO: This should have a separate diff for each node with only messages
             # that they need to reach votes.

@@ -8,6 +8,18 @@ from .node_base import NodeBase
 class NodeValidator(NodeBase):
     """Validation methods for the BaseNode class."""
 
+    def validate_block(self, block: Block) -> bool:
+        """
+        Verifies if a block is real.
+        :param block: Instance of a Block.
+        :return: True - block is valid. False - block is invalid.
+        """
+
+        # TODO Add block hash verification here.
+        if block.node_id is None or (block.block_id % len(self.nodes) == block.node_id and block.block_id >= 0):
+            return True
+        return False
+
     def validate_message(self, message: Message) -> bool:
         """
         Check if a message is legitimate.
@@ -20,10 +32,24 @@ class NodeValidator(NodeBase):
         if not isinstance(message, Message):
             return False
 
-        # Check if the message has a block.
-        if not message.blocks:
+        # Validate blocks in the chain if there are any.
+        for block in message.chain:
+            if not self.validate_block(block):
+                logging.error(
+                    "N{} received a message from N{} and discarded it because a block in a chain is invalid.".format(
+                        self.node_id,
+                        message.node_id
+                    )
+                )
+                return False
+
+        if message.message_type == Message.TYPE_CHAIN_UPDATE:
+            # If it's a chain update, validation stops here.
+            return True
+        elif not message.block:
+            # Otherwise check if the message has a block.
             logging.error(
-                "N{} received a message from N{} and discarded because there is no block attached.".format(
+                "N{} received a message from N{} and discarded because there are no blocks attached.".format(
                     self.node_id,
                     message.node_id,
                 )
@@ -31,29 +57,17 @@ class NodeValidator(NodeBase):
             return False
 
         # Verify sent blocks in the message.
-        for block in message.blocks:
-            if not self.validate_block(block):
-                logging.error(
-                    "N{} received a message from N{} and discarded it because the block is invalid.".format(
-                        self.node_id,
-                        message.node_id
-                    )
+        if not self.validate_block(message.block):
+            logging.error(
+                "N{} received a message from N{} and discarded it because the block is invalid.".format(
+                    self.node_id,
+                    message.node_id
                 )
-                return False
+            )
+            return False
 
         # TODO: Add real signature message validation here.
         return True
-
-    def validate_block(self, block: Block) -> bool:
-        """
-        Verifies if a block is real.
-        :param block: Instance of a Block.
-        :return: True - block is valid. False - block is invalid.
-        """
-        # TODO Add block hash verification here.
-        if block.node_id is None or (block.block_id % len(self.nodes) == block.node_id and block.block_id >= 0):
-            return True
-        return False
 
     def validate_chain(self, chain=None) -> bool:
         """
