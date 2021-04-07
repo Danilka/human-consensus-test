@@ -78,7 +78,7 @@ class NodeMessage(NodeBlock):
             return False
 
         # Check if the block has already been forged.
-        if message_in.block in self.chain:
+        if message_in.block.block_id < len(self.chain):
             # That node is behind. Send a chain update to it.
             self.send_chain_update(
                 node_id=message_in.node_id,

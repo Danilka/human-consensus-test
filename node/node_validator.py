@@ -42,7 +42,7 @@ class NodeValidator(NodeBase):
                 )
                 return False
 
-        if message.message_type == Message.TYPE_CHAIN_UPDATE:
+        if message.message_type in (Message.TYPE_CHAIN_UPDATE, Message.TYPE_CHAIN_UPDATE_REQUEST):
             # If it's a chain update, validation stops here.
             return True
         elif not message.block:
