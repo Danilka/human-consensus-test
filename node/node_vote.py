@@ -8,33 +8,16 @@ from .node_approve import NodeApprove
 class NodeVote(NodeApprove):
     """Vote related Node functions."""
 
-    def enough_votes(self, message_chain=None) -> bool:
-        """
-        Check if we have enough votes for the current block_candidate.
-        :return: True - there is enough votes, False - not enough votes.
-        """
-        if message_chain is None:
-            return len(self.active_candidate.messages_vote) > len(self.nodes) / 2.0
-        else:
-            return len(message_chain) > len(self.nodes) / 2.0
-
-    def enough_vote_status_updates(self) -> bool:
-        """
-        Check if we have enough vote status updates in the current candidate to try forging a new block.
-        :return: True - enough votes, False, not enough votes.
-        """
-        return len(self.active_candidate.vote_status_updates) > len(self.nodes) / 2.0
-
     def send_vote_once(self):
         """Send vote message to everyone once."""
 
         # Check if we sent a vote for any candidate.
         if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_VOTE):
-            return False
+            return
 
         # Check if we have enough approve status updates, we send a status update.
         if not self.enough_approve_status_updates():
-            return False
+            return
 
         # Save the action we are taking.
         self.active_candidate.take_action(Candidate.ACTION_VOTE)
@@ -54,7 +37,13 @@ class NodeVote(NodeApprove):
 
         # Send.
         self.broadcast(message_out)
-        return True
+
+    def enough_votes(self) -> bool:
+        """
+        Check if we have enough votes for the current block_candidate.
+        :return: True - there is enough votes, False - not enough votes.
+        """
+        return len(self.active_candidate.messages_vote) > len(self.nodes) / 2.0
 
     def send_vote_status_update_once(self):
         """Send vote status update once if we have enough votes."""
@@ -84,6 +73,13 @@ class NodeVote(NodeApprove):
 
         # Broadcast the message.
         self.broadcast(message_out)
+
+    def enough_vote_status_updates(self) -> bool:
+        """
+        Check if we have enough vote status updates in the current candidate to try forging a new block.
+        :return: True - enough votes, False, not enough votes.
+        """
+        return len(self.active_candidate.vote_status_updates) > len(self.nodes) / 2.0
 
     def receive_vote(self, message_in: Message):
         """Receive a vote message."""

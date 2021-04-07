@@ -13,13 +13,13 @@ LOGGING_LEVEL = logging.ERROR
 KEEP_EXCESSIVE_MESSAGES = False
 
 # Maximum number of main loop cycles.
-MAX_LOOP_ITERATIONS = 10**7
+MAX_LOOP_ITERATIONS = 10**8
 
 # Maximum X, Y distance.
 MAX_DISTANCE = 100.0
 
 # Number of nodes.
-NODE_COUNT = 16
+NODE_COUNT = 5
 
 # Number of blocks to generate.
 GENERATE_BLOCKS = 64

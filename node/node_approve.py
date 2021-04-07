@@ -10,6 +10,28 @@ from .node_commit import NodeCommit
 class NodeApprove(NodeCommit):
     """Approve related Node functions."""
 
+    def send_approve_once(self):
+        """Send approval message to everyone once."""
+
+        # Check if we sent an approve for any candidate.
+        if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_APPROVE):
+            return False
+
+        # Save the action we are taking.
+        self.active_candidate.take_action(Candidate.ACTION_APPROVE)
+
+        # Prepare the message.
+        message_out = Message(
+            node_id=self.node_id,
+            message_type=Message.TYPE_APPROVE,
+            block=self.active_candidate.block,
+        )
+
+        # Save approve message into our own log as well.
+        self.active_candidate.messages_approve[self.node_id] = message_out
+        self.broadcast(message_out)
+        return True
+
     def enough_approves(self, message_chain=None) -> bool:
         """
         Check if we have enough approves for the current block_candidate.
@@ -23,35 +45,6 @@ class NodeApprove(NodeCommit):
             if len(message_chain) > (len(self.nodes) - 1) / 2.0:
                 return True
             return False
-
-    def enough_approve_status_updates(self) -> bool:
-        """
-        Check if we have enough approve status updates in the current candidate to vote for it.
-        :return: True - enough approve status updates, False, not enough approve status updates.
-        """
-        return len(self.active_candidate.approve_status_updates) > len(self.nodes) / 2.0
-
-    def send_approve_once(self):
-        """Send approval message to everyone once."""
-
-        # Check if we sent an approve for any candidate.
-        if self.candidates[self.active_candidate.block.block_id].check_action(Candidate.ACTION_APPROVE):
-            return False
-
-        # Save the action we are taking.
-        self.active_candidate.actions_taken.add(Candidate.ACTION_APPROVE)
-
-        # Prepare the message.
-        message_out = Message(
-            node_id=self.node_id,
-            message_type=Message.TYPE_APPROVE,
-            block=self.active_candidate.block,
-        )
-
-        # Save approve message into our own log as well.
-        self.active_candidate.messages_approve[self.node_id] = message_out
-        self.broadcast(message_out)
-        return True
 
     def send_approve_status_update_once(self):
         """Send approve status update once if we have enough approves."""
@@ -78,6 +71,13 @@ class NodeApprove(NodeCommit):
             messages_chain=self.active_candidate.messages_approve,
         )
         self.broadcast(message_out)
+
+    def enough_approve_status_updates(self) -> bool:
+        """
+        Check if we have enough approve status updates in the current candidate to vote for it.
+        :return: True - enough approve status updates, False, not enough approve status updates.
+        """
+        return len(self.active_candidate.approve_status_updates) > len(self.nodes) / 2.0
 
     def receive_approve(self, message_in: Message):
         """Receive an approve message."""
