@@ -37,5 +37,6 @@ class NodeCommit(NodeMessage):
 
     def receive_commit(self, message_in: Message) -> bool:
         """Receive a commit message."""
-        # This logic is already handled by block validation in self.receive()
+        # This logic is already handled by message_to_candidate() in self.receive()
+        # There is no need to do anything else here.
         return True

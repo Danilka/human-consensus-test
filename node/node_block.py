@@ -26,9 +26,6 @@ class NodeBlock(NodeValidator):
         Get the next block ID that has to be generated.
         :return: Block ID
         """
-
-        if not self.chain:
-            return 0
         return len(self.chain)
 
     def get_next_block_node_id(self) -> int:

@@ -25,7 +25,6 @@ class NodeValidator(NodeBase):
         Check if a message is legitimate.
         :param message: Instance of a Message.
         :return: True -> message can be trusted. False -> message should not be trusted.
-        :raises: self.NodeNotEnoughData if there is not enough data in self.chain and self.candidates to validate a message.
         """
 
         # Check message type.

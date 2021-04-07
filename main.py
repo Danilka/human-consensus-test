@@ -19,7 +19,7 @@ MAX_LOOP_ITERATIONS = 10**7
 MAX_DISTANCE = 100.0
 
 # Number of nodes.
-NODE_COUNT = 4
+NODE_COUNT = 16
 
 # Number of blocks to generate.
 GENERATE_BLOCKS = 64
@@ -35,6 +35,9 @@ BLANK_BLOCK_TIMEOUT = 0.25    # In seconds.
 
 # Timeout for inactivity before a node requests chain update.
 CHAIN_UPDATE_TIMEOUT = 3.0    # In seconds.
+
+# Interface refresh interval.
+VISUAL_OUTPUT_REFRESH_RATE = 0.05   # In seconds.
 
 
 def main():
@@ -66,7 +69,7 @@ def main():
     nodes_print = []
     nodes_with_required_number_of_blocks = 0
     cycles = 0
-    with output(output_type="list", initial_len=NODE_COUNT, interval=50) as nodes_print:
+    with output(output_type="list", initial_len=NODE_COUNT, interval=int(VISUAL_OUTPUT_REFRESH_RATE*1000)) as nodes_print:
         while True:
             cycles += 1
 
