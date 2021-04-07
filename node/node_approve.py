@@ -38,11 +38,11 @@ class NodeApprove(NodeCommit):
         :return: True - there is enough approves, False - not enough approves.
         """
         if message_chain is None:
-            if len(self.active_candidate.messages_approve) > (len(self.nodes) - 1) / 2.0:
+            if len(self.active_candidate.messages_approve) > len(self.nodes) / 2.0:
                 return True
             return False
         else:
-            if len(message_chain) > (len(self.nodes) - 1) / 2.0:
+            if len(message_chain) > len(self.nodes) / 2.0:
                 return True
             return False
 
